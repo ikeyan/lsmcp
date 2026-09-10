@@ -69,6 +69,105 @@ describe("binFinder", () => {
       });
     });
 
+    describe("node_modules strategy with override", () => {
+      const strategy: BinFindStrategy = {
+        strategies: [
+          {
+            type: "node_modules",
+            names: ["typescript-language-server"],
+            override: {
+              package: "typescript",
+              minMajor: 7,
+              names: ["tsc"],
+              args: ["--lsp", "--stdio"],
+            },
+          },
+        ],
+        defaultArgs: ["--stdio"],
+      };
+      const projectRoot = "/test/project";
+      const bins = {
+        tsc: join(projectRoot, "node_modules", ".bin", "tsc"),
+        tls: join(
+          projectRoot,
+          "node_modules",
+          ".bin",
+          "typescript-language-server",
+        ),
+        parentTsc: "/test/node_modules/.bin/tsc",
+        parentTls: "/test/node_modules/.bin/typescript-language-server",
+      };
+      const packageJsons: Record<string, "local" | "parent"> = {
+        [join(projectRoot, "node_modules", "typescript", "package.json")]:
+          "local",
+        "/test/node_modules/typescript/package.json": "parent",
+      };
+
+      function layout(
+        existing: string[],
+        versions: Partial<Record<"local" | "parent", string>>,
+      ) {
+        vi.mocked(fs.existsSync).mockImplementation((path) =>
+          existing.includes(String(path)),
+        );
+        vi.mocked(fs.readFileSync).mockImplementation((path) => {
+          const level = packageJsons[String(path)];
+          const version = level && versions[level];
+          if (version) return JSON.stringify({ version });
+          throw new Error(`ENOENT: ${String(path)}`);
+        });
+      }
+
+      it("searches the override names with their args when the package is new enough", () => {
+        layout([bins.tsc, bins.tls], { local: "7.0.2" });
+
+        expect(findBinary(strategy, projectRoot)).toEqual({
+          command: bins.tsc,
+          args: ["--lsp", "--stdio"],
+        });
+      });
+
+      it("searches the plain names when the package is too old", () => {
+        layout([bins.tsc, bins.tls], { local: "5.9.2" });
+
+        expect(findBinary(strategy, projectRoot)).toEqual({
+          command: bins.tls,
+          args: ["--stdio"],
+        });
+      });
+
+      it("searches the plain names when the package is not installed", () => {
+        layout([bins.tsc, bins.tls], {});
+
+        expect(findBinary(strategy, projectRoot)).toEqual({
+          command: bins.tls,
+          args: ["--stdio"],
+        });
+      });
+
+      it("lets the nearest install decide, then searches ancestors for that binary", () => {
+        // local TypeScript 5, language server hoisted next to a TypeScript 7
+        layout([bins.tsc, bins.parentTsc, bins.parentTls], {
+          local: "5.9.2",
+          parent: "7.1.0",
+        });
+
+        expect(findBinary(strategy, projectRoot)).toEqual({
+          command: bins.parentTls,
+          args: ["--stdio"],
+        });
+      });
+
+      it("uses a hoisted install when there is none locally", () => {
+        layout([bins.parentTsc, bins.parentTls], { parent: "7.1.0" });
+
+        expect(findBinary(strategy, projectRoot)).toEqual({
+          command: bins.parentTsc,
+          args: ["--lsp", "--stdio"],
+        });
+      });
+    });
+
     it("should find globally installed binary", () => {
       const strategy: BinFindStrategy = {
         strategies: [{ type: "global", names: ["tsgo"] }],
