@@ -16,6 +16,26 @@ import {
 import type { LSPProcessState } from "./state.ts";
 import { debug } from "../utils/debug.ts";
 
+/** Server-to-client requests that only need an acknowledgement. */
+const ACKNOWLEDGED_SERVER_REQUESTS = new Set([
+  "client/unregisterCapability",
+  "window/workDoneProgress/create",
+  "workspace/codeLens/refresh",
+  "workspace/diagnostic/refresh",
+  "workspace/foldingRange/refresh",
+  "workspace/inlayHint/refresh",
+  "workspace/inlineValue/refresh",
+  "workspace/semanticTokens/refresh",
+]);
+
+/**
+ * Dynamic registrations this client can honour: notifications it would send
+ * if the event happened. The client never changes configuration, so a
+ * didChangeConfiguration registration is satisfied; it has no file watcher,
+ * so didChangeWatchedFiles is not.
+ */
+const HONOURED_REGISTRATIONS = new Set(["workspace/didChangeConfiguration"]);
+
 export class ConnectionHandler {
   constructor(private state: LSPProcessState) {}
 
@@ -136,6 +156,32 @@ export class ConnectionHandler {
         return {};
       });
       this.sendResponse((message as LSPRequest).id, configurations);
+    } else if (isLSPRequest(message)) {
+      if (message.method === "client/registerCapability") {
+        const registrations =
+          (message.params as { registrations?: Array<{ method: string }> })
+            ?.registrations ?? [];
+        const unsupported = registrations
+          .map((r) => r.method)
+          .filter((method) => !HONOURED_REGISTRATIONS.has(method));
+        if (unsupported.length === 0) {
+          this.sendResponse(message.id, null);
+        } else {
+          this.sendError(
+            message.id,
+            -32602,
+            `Cannot honour registration of: ${unsupported.join(", ")}`,
+          );
+        }
+      } else if (ACKNOWLEDGED_SERVER_REQUESTS.has(message.method)) {
+        this.sendResponse(message.id, null);
+      } else {
+        this.sendError(
+          message.id,
+          -32601,
+          `Method not found: ${message.method}`,
+        );
+      }
     }
 
     this.state.eventEmitter.emit("message", message);
@@ -181,6 +227,15 @@ export class ConnectionHandler {
       params: params as Record<string, unknown>,
     };
     this.sendMessage(notification);
+  }
+
+  private sendError(id: number | string, code: number, message: string): void {
+    const response: LSPResponse = {
+      jsonrpc: "2.0",
+      id,
+      error: { code, message },
+    };
+    this.sendMessage(response);
   }
 
   private sendResponse(id: number | string, result: unknown): void {
