@@ -4,9 +4,20 @@
 
 import { existsSync } from "fs";
 import { join, dirname } from "path";
-import { execSync } from "child_process";
-import type { BinFindStrategy } from "../config/schema.ts";
+import { execSync, spawnSync } from "child_process";
+import type { BinFindStrategy, BinFindStrategyItem } from "../config/schema.ts";
 import { mcpDebugWithPrefix } from "./mcp-logger.ts";
+
+/** `dir` followed by each of its ancestors up to the filesystem root. */
+function* selfAndAncestors(dir: string): Generator<string> {
+  let current = dir;
+  while (true) {
+    yield current;
+    const parent = dirname(current);
+    if (parent === current) return;
+    current = parent;
+  }
+}
 
 /**
  * Find a binary using the specified strategy
@@ -33,15 +44,31 @@ export function findBinary(
   // Try each strategy in order
   for (const item of strategy.strategies) {
     mcpDebugWithPrefix("BinFinder", `Trying strategy: ${item.type}`);
+    const found = findWithItem(item, projectRoot, defaultArgs);
+    if (found) {
+      return found;
+    }
+  }
 
-    switch (item.type) {
-      case "venv": {
-        // Search in Python virtual environments
-        const venvDirs = item.venvDirs || [".venv", "venv"];
-        for (const name of item.names) {
-          // Check current directory
+  mcpDebugWithPrefix("BinFinder", `Binary not found with any strategy`);
+  return null;
+}
+
+type Found = { command: string; args: string[] };
+
+function findWithItem(
+  item: BinFindStrategyItem,
+  projectRoot: string,
+  defaultArgs: string[],
+): Found | null {
+  switch (item.type) {
+    case "venv": {
+      // Search in Python virtual environments of the project and its ancestors
+      const venvDirs = item.venvDirs || [".venv", "venv"];
+      for (const name of item.names) {
+        for (const dir of selfAndAncestors(projectRoot)) {
           for (const venvDir of venvDirs) {
-            const venvBin = join(projectRoot, venvDir, "bin", name);
+            const venvBin = join(dir, venvDir, "bin", name);
             if (existsSync(venvBin)) {
               mcpDebugWithPrefix(
                 "BinFinder",
@@ -50,168 +77,179 @@ export function findBinary(
               return { command: venvBin, args: defaultArgs };
             }
           }
-
-          // Check parent directories
-          let currentDir = projectRoot;
-          let parentDir = dirname(currentDir);
-          while (parentDir !== currentDir) {
-            for (const venvDir of venvDirs) {
-              const parentVenvBin = join(parentDir, venvDir, "bin", name);
-              if (existsSync(parentVenvBin)) {
-                mcpDebugWithPrefix(
-                  "BinFinder",
-                  `Found in parent ${venvDir}: ${parentVenvBin}`,
-                );
-                return { command: parentVenvBin, args: defaultArgs };
-              }
-            }
-            currentDir = parentDir;
-            parentDir = dirname(currentDir);
-          }
         }
-        break;
       }
+      return null;
+    }
 
-      case "node_modules": {
-        // Search in node_modules/.bin
+    case "node_modules": {
+      // The nearest node_modules/.bin that has one of the names
+      const args = item.args ?? defaultArgs;
+      for (const dir of selfAndAncestors(projectRoot)) {
         for (const name of item.names) {
-          // Check current directory
-          const localBin = join(projectRoot, "node_modules", ".bin", name);
-          if (existsSync(localBin)) {
-            mcpDebugWithPrefix(
-              "BinFinder",
-              `Found in local node_modules: ${localBin}`,
+          const bin = join(dir, "node_modules", ".bin", name);
+          if (existsSync(bin)) {
+            mcpDebugWithPrefix("BinFinder", `Found in node_modules: ${bin}`);
+            return accept(
+              { command: bin, args },
+              item,
+              projectRoot,
+              defaultArgs,
             );
-            return { command: localBin, args: defaultArgs };
-          }
-
-          // Check parent directories
-          let currentDir = projectRoot;
-          let parentDir = dirname(currentDir);
-          while (parentDir !== currentDir) {
-            const parentBin = join(parentDir, "node_modules", ".bin", name);
-            if (existsSync(parentBin)) {
-              mcpDebugWithPrefix(
-                "BinFinder",
-                `Found in parent node_modules: ${parentBin}`,
-              );
-              return { command: parentBin, args: defaultArgs };
-            }
-            currentDir = parentDir;
-            parentDir = dirname(currentDir);
           }
         }
-        break;
       }
+      return null;
+    }
 
-      case "global": {
-        // Search globally installed binaries
-        for (const name of item.names) {
-          try {
-            const globalPath = execSync(`which ${name}`, {
-              encoding: "utf-8",
-              stdio: ["pipe", "pipe", "ignore"], // Suppress stderr
-            }).trim();
-            if (globalPath) {
-              mcpDebugWithPrefix("BinFinder", `Found globally: ${globalPath}`);
-              return { command: globalPath, args: defaultArgs };
-            }
-          } catch {
-            // Not found globally, continue to next name
-          }
-        }
-        break;
-      }
-
-      case "uv": {
-        // Use UV run for Python packages
+    case "global": {
+      // Search globally installed binaries
+      const args = item.args ?? defaultArgs;
+      for (const name of item.names) {
         try {
-          execSync("which uv", {
+          const globalPath = execSync(`which ${name}`, {
             encoding: "utf-8",
-            stdio: ["pipe", "pipe", "ignore"],
-          });
-
-          // Check if uv.lock exists in the project (indicates uv sync has been run)
-          const uvLockPath = join(projectRoot, "uv.lock");
-          const pyprojectPath = join(projectRoot, "pyproject.toml");
-
-          if (existsSync(uvLockPath) || existsSync(pyprojectPath)) {
-            // Project uses uv, use uv run
-            mcpDebugWithPrefix(
-              "BinFinder",
-              `Using uv run: ${item.command || item.tool}`,
+            stdio: ["pipe", "pipe", "ignore"], // Suppress stderr
+          }).trim();
+          if (globalPath) {
+            mcpDebugWithPrefix("BinFinder", `Found globally: ${globalPath}`);
+            return accept(
+              { command: globalPath, args },
+              item,
+              projectRoot,
+              defaultArgs,
             );
-
-            if (item.command) {
-              // Use specific command from the tool
-              return {
-                command: "uv",
-                args: ["run", item.command, ...defaultArgs],
-              };
-            } else {
-              // Use tool directly
-              return {
-                command: "uv",
-                args: ["run", item.tool, ...defaultArgs],
-              };
-            }
-          } else {
-            // No uv.lock, try uv tool run instead
-            mcpDebugWithPrefix("BinFinder", `Using uv tool run: ${item.tool}`);
-
-            if (item.command) {
-              // Use specific command from the tool
-              return {
-                command: "uv",
-                args: [
-                  "tool",
-                  "run",
-                  "--from",
-                  item.tool,
-                  item.command,
-                  ...defaultArgs,
-                ],
-              };
-            } else {
-              // Use tool directly
-              return {
-                command: "uv",
-                args: ["tool", "run", item.tool, ...defaultArgs],
-              };
-            }
           }
         } catch {
-          mcpDebugWithPrefix("BinFinder", `uv not found, skipping uv strategy`);
+          // Not found globally, continue to next name
         }
-        break;
       }
+      return null;
+    }
 
-      case "npx": {
-        // Use NPX to run package
-        mcpDebugWithPrefix("BinFinder", `Using npx: ${item.package}`);
-        return {
-          command: "npx",
-          args: ["-y", item.package, ...defaultArgs],
-        };
-      }
+    case "uv": {
+      // Use UV run for Python packages
+      try {
+        execSync("which uv", {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "ignore"],
+        });
 
-      case "path": {
-        // Use direct path (expand ~ for home directory)
-        const expandedPath = item.path.replace(
-          /^~/,
-          process.env.HOME || process.env.USERPROFILE || "",
-        );
-        if (existsSync(expandedPath)) {
-          mcpDebugWithPrefix("BinFinder", `Found at path: ${expandedPath}`);
-          return { command: expandedPath, args: defaultArgs };
+        // Check if uv.lock exists in the project (indicates uv sync has been run)
+        const uvLockPath = join(projectRoot, "uv.lock");
+        const pyprojectPath = join(projectRoot, "pyproject.toml");
+
+        if (existsSync(uvLockPath) || existsSync(pyprojectPath)) {
+          // Project uses uv, use uv run
+          mcpDebugWithPrefix(
+            "BinFinder",
+            `Using uv run: ${item.command || item.tool}`,
+          );
+
+          if (item.command) {
+            // Use specific command from the tool
+            return {
+              command: "uv",
+              args: ["run", item.command, ...defaultArgs],
+            };
+          } else {
+            // Use tool directly
+            return {
+              command: "uv",
+              args: ["run", item.tool, ...defaultArgs],
+            };
+          }
+        } else {
+          // No uv.lock, try uv tool run instead
+          mcpDebugWithPrefix("BinFinder", `Using uv tool run: ${item.tool}`);
+
+          if (item.command) {
+            // Use specific command from the tool
+            return {
+              command: "uv",
+              args: [
+                "tool",
+                "run",
+                "--from",
+                item.tool,
+                item.command,
+                ...defaultArgs,
+              ],
+            };
+          } else {
+            // Use tool directly
+            return {
+              command: "uv",
+              args: ["tool", "run", item.tool, ...defaultArgs],
+            };
+          }
         }
-        break;
+      } catch {
+        mcpDebugWithPrefix("BinFinder", `uv not found, skipping uv strategy`);
       }
+      return null;
+    }
+
+    case "npx": {
+      // Use NPX to run package
+      mcpDebugWithPrefix("BinFinder", `Using npx: ${item.package}`);
+      return {
+        command: "npx",
+        args: ["-y", item.package, ...defaultArgs],
+      };
+    }
+
+    case "path": {
+      // Use direct path (expand ~ for home directory)
+      const expandedPath = item.path.replace(
+        /^~/,
+        process.env.HOME || process.env.USERPROFILE || "",
+      );
+      if (existsSync(expandedPath)) {
+        mcpDebugWithPrefix("BinFinder", `Found at path: ${expandedPath}`);
+        return { command: expandedPath, args: defaultArgs };
+      }
+      return null;
     }
   }
+}
 
-  mcpDebugWithPrefix("BinFinder", `Binary not found with any strategy`);
-  return null;
+/**
+ * A found binary is used as is unless the item has `ifFail`; then it must
+ * answer an LSP initialize request, otherwise the `ifFail` strategies decide.
+ */
+function accept(
+  found: Found,
+  item: { ifFail?: BinFindStrategyItem[] },
+  projectRoot: string,
+  defaultArgs: string[],
+): Found | null {
+  if (!item.ifFail || speaksLsp(found)) {
+    return found;
+  }
+  mcpDebugWithPrefix(
+    "BinFinder",
+    `${found.command} ${found.args.join(" ")} did not answer initialize; trying ifFail strategies`,
+  );
+  return findBinary({ strategies: item.ifFail, defaultArgs }, projectRoot);
+}
+
+const INITIALIZE_REQUEST = JSON.stringify({
+  jsonrpc: "2.0",
+  id: 1,
+  method: "initialize",
+  params: { processId: null, rootUri: null, capabilities: {} },
+});
+
+/** Run the binary once with an initialize request on stdin; JSON-RPC frames on stdout mean it speaks LSP. */
+function speaksLsp({ command, args }: Found): boolean {
+  const result = spawnSync(command, args, {
+    input: `Content-Length: ${Buffer.byteLength(INITIALIZE_REQUEST)}\r\n\r\n${INITIALIZE_REQUEST}`,
+    encoding: "utf8",
+    stdio: ["pipe", "pipe", "ignore"],
+    timeout: 10000,
+  });
+  return (result?.stdout ?? "").trimStart().startsWith("Content-Length:");
 }
 
 /**
