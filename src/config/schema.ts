@@ -99,6 +99,24 @@ export const binFindStrategyItemSchema = z.discriminatedUnion("type", [
     names: z
       .array(z.string())
       .describe("Binary names to search in node_modules/.bin"),
+    args: z
+      .array(z.string())
+      .optional()
+      .describe("Arguments for these binaries, overriding defaultArgs"),
+    requires: z
+      .object({
+        package: z
+          .string()
+          .describe("Package that must be installed in the same node_modules"),
+        minMajor: z
+          .number()
+          .int()
+          .describe("Minimum major version of that package"),
+      })
+      .optional()
+      .describe(
+        "Only accept a binary when the given package is installed next to it at or above this major version (e.g. typescript >= 7 ships the native server as tsc)",
+      ),
   }),
 
   // Global installation
