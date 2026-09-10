@@ -1,14 +1,24 @@
 import type { Preset } from "../config/schema.ts";
 
 /**
- * TypeScript Language Server adapter (default)
+ * TypeScript adapter (default)
  */
 export const typescriptAdapter: Preset = {
   presetId: "typescript",
   binFindStrategy: {
     strategies: [
       // 1. Check node_modules first
-      { type: "node_modules", names: ["typescript-language-server"] },
+      {
+        type: "node_modules",
+        names: ["typescript-language-server"],
+        // TypeScript 7+ serves LSP from tsc itself
+        override: {
+          package: "typescript",
+          minMajor: 7,
+          names: ["tsc"],
+          args: ["--lsp", "--stdio"],
+        },
+      },
       // 2. Check global installation
       { type: "global", names: ["typescript-language-server"] },
       // 3. Fall back to npx

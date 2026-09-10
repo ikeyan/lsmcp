@@ -7,6 +7,38 @@ import { join, dirname } from "path";
 import { execSync } from "child_process";
 import type { BinFindStrategy } from "../config/schema.ts";
 import { mcpDebugWithPrefix } from "./mcp-logger.ts";
+import { installedPackageMajor } from "./packageVersion.ts";
+
+/** Binary names and args to search in this node_modules, applying `override`. */
+function candidatesIn(
+  nodeModules: string,
+  item: Extract<
+    BinFindStrategy["strategies"][number],
+    { type: "node_modules" }
+  >,
+  defaultArgs: string[],
+): { names: string[]; args: string[] } {
+  const override = item.override;
+  if (
+    override &&
+    (installedPackageMajor(nodeModules, override.package) ?? -Infinity) >=
+      override.minMajor
+  ) {
+    return { names: override.names, args: override.args ?? defaultArgs };
+  }
+  return { names: item.names, args: defaultArgs };
+}
+
+/** `dir` followed by each of its ancestors up to the filesystem root. */
+function* selfAndAncestors(dir: string): Generator<string> {
+  let current = dir;
+  while (true) {
+    yield current;
+    const parent = dirname(current);
+    if (parent === current) return;
+    current = parent;
+  }
+}
 
 /**
  * Find a binary using the specified strategy
@@ -73,32 +105,16 @@ export function findBinary(
       }
 
       case "node_modules": {
-        // Search in node_modules/.bin
-        for (const name of item.names) {
-          // Check current directory
-          const localBin = join(projectRoot, "node_modules", ".bin", name);
-          if (existsSync(localBin)) {
-            mcpDebugWithPrefix(
-              "BinFinder",
-              `Found in local node_modules: ${localBin}`,
-            );
-            return { command: localBin, args: defaultArgs };
-          }
-
-          // Check parent directories
-          let currentDir = projectRoot;
-          let parentDir = dirname(currentDir);
-          while (parentDir !== currentDir) {
-            const parentBin = join(parentDir, "node_modules", ".bin", name);
-            if (existsSync(parentBin)) {
-              mcpDebugWithPrefix(
-                "BinFinder",
-                `Found in parent node_modules: ${parentBin}`,
-              );
-              return { command: parentBin, args: defaultArgs };
+        // Search in node_modules/.bin of the project and its ancestors
+        for (const dir of selfAndAncestors(projectRoot)) {
+          const nodeModules = join(dir, "node_modules");
+          const { names, args } = candidatesIn(nodeModules, item, defaultArgs);
+          for (const name of names) {
+            const bin = join(nodeModules, ".bin", name);
+            if (existsSync(bin)) {
+              mcpDebugWithPrefix("BinFinder", `Found in node_modules: ${bin}`);
+              return { command: bin, args };
             }
-            currentDir = parentDir;
-            parentDir = dirname(currentDir);
           }
         }
         break;
