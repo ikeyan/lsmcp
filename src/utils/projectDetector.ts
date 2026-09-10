@@ -7,6 +7,7 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import { debug } from "./mcpHelpers.ts";
 import { LSMCPError, ErrorCode } from "../domain/errors/index.ts";
+import { dependencyMajor } from "./packageVersion.ts";
 
 interface DetectedProject {
   preset: string;
@@ -42,6 +43,12 @@ export async function detectProjectType(
       const packageContent = await readFile(packageJsonPath, "utf-8");
       const packageJson = JSON.parse(packageContent);
 
+      const typescriptMajor = dependencyMajor(
+        projectRoot,
+        packageJson,
+        "typescript",
+      );
+
       // Check for tsgo
       if (
         packageJson.devDependencies?.["@typescript/native-preview"] ||
@@ -50,6 +57,17 @@ export async function detectProjectType(
         detected.push({
           preset: "tsgo",
           reason: "Found @typescript/native-preview in package.json",
+        });
+      }
+      // TypeScript 7+ is the native compiler; its tsc serves LSP
+      else if (
+        existsSync(tsconfigPath) &&
+        typescriptMajor !== undefined &&
+        typescriptMajor >= 7
+      ) {
+        detected.push({
+          preset: "tsgo",
+          reason: `Found typescript ${typescriptMajor} (native tsc --lsp) in package.json`,
         });
       }
       // Check for regular TypeScript
