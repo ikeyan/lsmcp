@@ -16,6 +16,19 @@ import {
 import type { LSPProcessState } from "./state.ts";
 import { debug } from "../utils/debug.ts";
 
+/** Server-to-client requests that only need an acknowledgement. */
+const ACKNOWLEDGED_SERVER_REQUESTS = new Set([
+  "client/registerCapability",
+  "client/unregisterCapability",
+  "window/workDoneProgress/create",
+  "workspace/codeLens/refresh",
+  "workspace/diagnostic/refresh",
+  "workspace/foldingRange/refresh",
+  "workspace/inlayHint/refresh",
+  "workspace/inlineValue/refresh",
+  "workspace/semanticTokens/refresh",
+]);
+
 export class ConnectionHandler {
   constructor(private state: LSPProcessState) {}
 
@@ -136,6 +149,18 @@ export class ConnectionHandler {
         return {};
       });
       this.sendResponse((message as LSPRequest).id, configurations);
+    } else if (isLSPRequest(message)) {
+      // Leaving a request unanswered stalls servers that wait for it, e.g.
+      // TypeScript 7 `tsc --lsp` after client/registerCapability.
+      if (ACKNOWLEDGED_SERVER_REQUESTS.has(message.method)) {
+        this.sendResponse(message.id, null);
+      } else {
+        this.sendError(
+          message.id,
+          -32601,
+          `Method not found: ${message.method}`,
+        );
+      }
     }
 
     this.state.eventEmitter.emit("message", message);
@@ -181,6 +206,15 @@ export class ConnectionHandler {
       params: params as Record<string, unknown>,
     };
     this.sendMessage(notification);
+  }
+
+  private sendError(id: number | string, code: number, message: string): void {
+    const response: LSPResponse = {
+      jsonrpc: "2.0",
+      id,
+      error: { code, message },
+    };
+    this.sendMessage(response);
   }
 
   private sendResponse(id: number | string, result: unknown): void {
