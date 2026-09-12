@@ -24,7 +24,11 @@ function createState() {
 
 function deliver(state: LSPProcessState, message: Record<string, unknown>) {
   const body = JSON.stringify(message);
-  state.buffer += `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
+  const frame = Buffer.from(
+    `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+  );
+  state.chunks.push(frame);
+  state.bufferedBytes += frame.length;
 }
 
 describe("ConnectionHandler server-to-client requests", () => {
@@ -146,5 +150,47 @@ describe("ConnectionHandler server-to-client requests", () => {
 
     expect(written).toEqual([]);
     expect(state.diagnostics.get("file:///project/a.ts")).toEqual([]);
+  });
+  it("frames by byte length so multibyte text does not desync the stream", () => {
+    // tsc --lsp logs timings like "528.041µs"; µ is 2 bytes but 1 character
+    const { state, written } = createState();
+    deliver(state, {
+      jsonrpc: "2.0",
+      method: "window/logMessage",
+      params: { type: 3, message: "handled in 528.041µs" },
+    });
+    deliver(state, {
+      jsonrpc: "2.0",
+      id: 9,
+      method: "window/workDoneProgress/create",
+      params: { token: "t" },
+    });
+
+    new ConnectionHandler(state).processBuffer();
+
+    expect(written).toEqual([{ jsonrpc: "2.0", id: 9, result: null }]);
+    expect(state.bufferedBytes).toBe(0);
+  });
+  it("reassembles a frame whose multibyte character is split across chunks", () => {
+    const { state, written } = createState();
+    deliver(state, {
+      jsonrpc: "2.0",
+      id: 11,
+      method: "window/workDoneProgress/create",
+      params: { token: "µ" },
+    });
+    const [frame] = state.chunks;
+    const cut = frame.indexOf(Buffer.from("µ")) + 1; // inside the 2-byte µ
+    state.chunks = [frame.subarray(0, cut)];
+    state.bufferedBytes = cut;
+    const handler = new ConnectionHandler(state);
+    handler.processBuffer();
+    expect(written).toEqual([]);
+
+    state.chunks.push(frame.subarray(cut));
+    state.bufferedBytes += frame.length - cut;
+    handler.processBuffer();
+
+    expect(written).toEqual([{ jsonrpc: "2.0", id: 11, result: null }]);
   });
 });
