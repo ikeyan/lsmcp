@@ -2,6 +2,7 @@
  * LSP Client lifecycle management
  */
 
+import { StringDecoder } from "string_decoder";
 import type {
   InitializeParams,
   InitializeResult,
@@ -13,6 +14,9 @@ import { debug, formatError } from "../utils/debug.ts";
 import { getServerCharacteristics } from "../utils/helpers.ts";
 
 export class LifecycleManager {
+  /** Reassembles UTF-8 characters split across stdout chunks. */
+  private readonly stdoutDecoder = new StringDecoder("utf8");
+
   constructor(
     private state: LSPProcessState,
     private connection: ConnectionHandler,
@@ -139,7 +143,7 @@ export class LifecycleManager {
     });
 
     this.state.process.stdout?.on("data", (data: Buffer) => {
-      this.state.buffer += data.toString();
+      this.state.buffer += this.stdoutDecoder.write(data);
       this.connection.processBuffer();
     });
 
