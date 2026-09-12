@@ -14,6 +14,8 @@ import {
   isLSPRequest,
 } from "../protocol/types/index.ts";
 import type { LSPProcessState } from "./state.ts";
+import type { WorkspaceEdit } from "../protocol/types/index.ts";
+import type { ApplyWorkspaceEditResponse } from "../protocol/types/responses.ts";
 import { debug } from "../utils/debug.ts";
 
 /** Server-to-client requests that only need an acknowledgement. */
@@ -28,16 +30,28 @@ const ACKNOWLEDGED_SERVER_REQUESTS = new Set([
   "workspace/semanticTokens/refresh",
 ]);
 
-/**
- * Dynamic registrations this client can honour: notifications it would send
- * if the event happened. The client never changes configuration, so a
- * didChangeConfiguration registration is satisfied; it has no file watcher,
- * so didChangeWatchedFiles is not.
- */
+/** Dynamic registrations this client can honour: notifications it would send if the event happened. */
 const HONOURED_REGISTRATIONS = new Set(["workspace/didChangeConfiguration"]);
 
+export type ApplyEditHandler = (
+  edit: WorkspaceEdit,
+) => Promise<ApplyWorkspaceEditResponse>;
+
 export class ConnectionHandler {
-  constructor(private state: LSPProcessState) {}
+  /** Server requests are applied one at a time, in arrival order */
+  private applyEditQueue: Promise<unknown> = Promise.resolve();
+
+  constructor(
+    private state: LSPProcessState,
+    private handlers: { applyEdit?: ApplyEditHandler } = {},
+  ) {}
+
+  /** Append raw stdout bytes and parse whatever frames are complete */
+  receive(data: Buffer): void {
+    this.state.chunks.push(data);
+    this.state.bufferedBytes += data.length;
+    this.processBuffer();
+  }
 
   processBuffer(): void {
     for (;;) {
@@ -57,7 +71,7 @@ export class ConnectionHandler {
         this.state.contentLength = parseInt(contentLengthMatch[1], 10);
       }
 
-      // Content-Length counts UTF-8 bytes; wait without touching the chunks
+      // Content-Length counts UTF-8 bytes
       if (this.state.bufferedBytes < this.state.contentLength) {
         return;
       }
@@ -166,7 +180,9 @@ export class ConnectionHandler {
       });
       this.sendResponse((message as LSPRequest).id, configurations);
     } else if (isLSPRequest(message)) {
-      if (message.method === "client/registerCapability") {
+      if (message.method === "workspace/applyEdit") {
+        this.handleApplyEdit(message);
+      } else if (message.method === "client/registerCapability") {
         const registrations =
           (message.params as { registrations?: Array<{ method: string }> })
             ?.registrations ?? [];
@@ -236,6 +252,41 @@ export class ConnectionHandler {
       params: params as Record<string, unknown>,
     };
     this.sendMessage(notification);
+  }
+
+  private handleApplyEdit(message: LSPRequest): void {
+    const handler = this.handlers.applyEdit;
+    if (!handler) {
+      this.sendError(
+        message.id,
+        -32601,
+        "Method not found: workspace/applyEdit",
+      );
+      return;
+    }
+    const edit = (message.params as { edit?: WorkspaceEdit } | undefined)?.edit;
+    if (!edit) {
+      this.sendError(
+        message.id,
+        -32602,
+        "workspace/applyEdit: params.edit is required",
+      );
+      return;
+    }
+    this.applyEditQueue = this.applyEditQueue
+      .then(() => handler(edit))
+      .then(
+        (result) => this.sendResponse(message.id, result),
+        (error: unknown) =>
+          this.sendError(
+            message.id,
+            -32603,
+            error instanceof Error ? error.message : String(error),
+          ),
+      )
+      .catch((error: unknown) =>
+        debug("workspace/applyEdit response failed:", error),
+      );
   }
 
   private sendError(id: number | string, code: number, message: string): void {
