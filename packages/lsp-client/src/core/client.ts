@@ -406,38 +406,17 @@ export function createLSPClient(config: LSPClientConfig): InternalLSPClient {
 
     async applyEdit(
       edit: WorkspaceEdit,
-      label?: string,
     ): Promise<{ applied: boolean; failureReason?: string }> {
+      // workspace/applyEdit is a server-to-client request; the client applies
+      // its own edits directly.
       try {
-        const params = { edit, label };
-        const result = await connection.sendRequest<{
-          applied: boolean;
-          failureReason?: string;
-        }>("workspace/applyEdit", params);
-        return (
-          result ?? { applied: false, failureReason: "No response from server" }
-        );
-      } catch (error: unknown) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        if (
-          errorMessage.includes("Unhandled method") ||
-          errorMessage.includes("Method not found")
-        ) {
-          debug(
-            "LSP server doesn't support workspace/applyEdit, applying edits manually",
-          );
-          try {
-            await applyWorkspaceEditManually(edit, state.fileSystemApi);
-            return { applied: true };
-          } catch (err) {
-            return {
-              applied: false,
-              failureReason: `Failed to apply edits manually: ${err instanceof Error ? err.message : String(err)}`,
-            };
-          }
-        }
-        throw error;
+        await applyWorkspaceEditManually(edit, state.fileSystemApi);
+        return { applied: true };
+      } catch (err) {
+        return {
+          applied: false,
+          failureReason: `Failed to apply edits: ${err instanceof Error ? err.message : String(err)}`,
+        };
       }
     },
 
