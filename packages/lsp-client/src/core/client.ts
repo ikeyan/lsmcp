@@ -28,7 +28,10 @@ import { LifecycleManager } from "./lifecycle.ts";
 import { DocumentManager } from "../managers/document-manager.ts";
 import { DiagnosticsManager } from "../managers/diagnostics.ts";
 import { createFeatureCommands } from "../utils/features.ts";
-import { applyWorkspaceEditManually } from "../managers/workspace.ts";
+import {
+  applyEditFromServer,
+  applyWorkspaceEdit,
+} from "../managers/workspace.ts";
 import { getLanguageIdFromPath } from "../utils/language.ts";
 import { debug } from "../utils/debug.ts";
 import type { IFileSystem, IServerCharacteristics } from "../interfaces.ts";
@@ -111,9 +114,14 @@ export interface InternalLSPClient {
 
 export function createLSPClient(config: LSPClientConfig): InternalLSPClient {
   const state = createInitialState(config);
-  const connection = new ConnectionHandler(state);
-  const lifecycle = new LifecycleManager(state, connection, config);
   const documentManager = new DocumentManager();
+  const connection = new ConnectionHandler(state, {
+    applyEdit: (edit) =>
+      applyEditFromServer(edit, state.fileSystemApi, documentManager, (m, p) =>
+        connection.sendNotification(m, p),
+      ),
+  });
+  const lifecycle = new LifecycleManager(state, connection, config);
   const diagnosticsManager = new DiagnosticsManager(state.eventEmitter);
   const commands = createFeatureCommands();
 
@@ -404,20 +412,10 @@ export function createLSPClient(config: LSPClientConfig): InternalLSPClient {
       }
     },
 
-    async applyEdit(
+    applyEdit(
       edit: WorkspaceEdit,
     ): Promise<{ applied: boolean; failureReason?: string }> {
-      // workspace/applyEdit is a server-to-client request; the client applies
-      // its own edits directly.
-      try {
-        await applyWorkspaceEditManually(edit, state.fileSystemApi);
-        return { applied: true };
-      } catch (err) {
-        return {
-          applied: false,
-          failureReason: `Failed to apply edits: ${err instanceof Error ? err.message : String(err)}`,
-        };
-      }
+      return applyWorkspaceEdit(edit, state.fileSystemApi);
     },
 
     // Advanced features

@@ -14,6 +14,8 @@ import {
   isLSPRequest,
 } from "../protocol/types/index.ts";
 import type { LSPProcessState } from "./state.ts";
+import type { WorkspaceEdit } from "../protocol/types/index.ts";
+import type { ApplyWorkspaceEditResponse } from "../protocol/types/responses.ts";
 import { debug } from "../utils/debug.ts";
 
 /** Server-to-client requests that only need an acknowledgement. */
@@ -36,8 +38,18 @@ const ACKNOWLEDGED_SERVER_REQUESTS = new Set([
  */
 const HONOURED_REGISTRATIONS = new Set(["workspace/didChangeConfiguration"]);
 
+export type ApplyEditHandler = (
+  edit: WorkspaceEdit,
+) => Promise<ApplyWorkspaceEditResponse>;
+
 export class ConnectionHandler {
-  constructor(private state: LSPProcessState) {}
+  /** Server requests are applied one at a time, in arrival order */
+  private applyEditQueue: Promise<unknown> = Promise.resolve();
+
+  constructor(
+    private state: LSPProcessState,
+    private handlers: { applyEdit?: ApplyEditHandler } = {},
+  ) {}
 
   processBuffer(): void {
     for (;;) {
@@ -166,7 +178,9 @@ export class ConnectionHandler {
       });
       this.sendResponse((message as LSPRequest).id, configurations);
     } else if (isLSPRequest(message)) {
-      if (message.method === "client/registerCapability") {
+      if (message.method === "workspace/applyEdit") {
+        this.handleApplyEdit(message);
+      } else if (message.method === "client/registerCapability") {
         const registrations =
           (message.params as { registrations?: Array<{ method: string }> })
             ?.registrations ?? [];
@@ -236,6 +250,42 @@ export class ConnectionHandler {
       params: params as Record<string, unknown>,
     };
     this.sendMessage(notification);
+  }
+
+  private handleApplyEdit(message: LSPRequest): void {
+    const handler = this.handlers.applyEdit;
+    if (!handler) {
+      this.sendError(
+        message.id,
+        -32601,
+        "Method not found: workspace/applyEdit",
+      );
+      return;
+    }
+    const edit = (message.params as { edit?: WorkspaceEdit } | undefined)?.edit;
+    if (!edit) {
+      this.sendError(
+        message.id,
+        -32602,
+        "workspace/applyEdit: params.edit is required",
+      );
+      return;
+    }
+    this.applyEditQueue = this.applyEditQueue
+      .then(() => handler(edit))
+      .then(
+        (result) => this.sendResponse(message.id, result),
+        (error: unknown) =>
+          this.sendError(
+            message.id,
+            -32603,
+            error instanceof Error ? error.message : String(error),
+          ),
+      )
+      // a failed send (e.g. the process is gone) must not block later requests
+      .catch((error: unknown) =>
+        debug("workspace/applyEdit response failed:", error),
+      );
   }
 
   private sendError(id: number | string, code: number, message: string): void {
