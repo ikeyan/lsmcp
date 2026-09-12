@@ -88,6 +88,7 @@ export class LifecycleManager {
         workspace: {
           workspaceFolders: true,
           configuration: true,
+          applyEdit: true,
         },
       },
       initializationOptions: this.config.initializationOptions,

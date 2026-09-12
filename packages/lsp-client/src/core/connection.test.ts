@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { ChildProcess } from "child_process";
 import { ConnectionHandler } from "./connection.ts";
 import { createInitialState, type LSPProcessState } from "./state.ts";
@@ -192,5 +192,91 @@ describe("ConnectionHandler server-to-client requests", () => {
     handler.processBuffer();
 
     expect(written).toEqual([{ jsonrpc: "2.0", id: 11, result: null }]);
+  });
+
+  describe("workspace/applyEdit", () => {
+    const request = {
+      jsonrpc: "2.0",
+      id: 20,
+      method: "workspace/applyEdit",
+      params: { edit: { changes: {} } },
+    };
+
+    it("answers with the handler's result", async () => {
+      const { state, written } = createState();
+      deliver(state, request);
+      new ConnectionHandler(state, {
+        applyEdit: async () => ({ applied: true }),
+      }).processBuffer();
+
+      await vi.waitFor(() => expect(written).toHaveLength(1));
+      expect(written).toEqual([
+        { jsonrpc: "2.0", id: 20, result: { applied: true } },
+      ]);
+    });
+
+    it("turns a throwing handler into an InternalError response", async () => {
+      const { state, written } = createState();
+      deliver(state, request);
+      new ConnectionHandler(state, {
+        applyEdit: async () => {
+          throw new Error("disk on fire");
+        },
+      }).processBuffer();
+
+      await vi.waitFor(() => expect(written).toHaveLength(1));
+      expect(written).toEqual([
+        {
+          jsonrpc: "2.0",
+          id: 20,
+          error: { code: -32603, message: "disk on fire" },
+        },
+      ]);
+    });
+
+    it("is MethodNotFound without a handler", () => {
+      const { state, written } = createState();
+      deliver(state, request);
+      new ConnectionHandler(state).processBuffer();
+
+      expect(written).toEqual([
+        {
+          jsonrpc: "2.0",
+          id: 20,
+          error: {
+            code: -32601,
+            message: "Method not found: workspace/applyEdit",
+          },
+        },
+      ]);
+    });
+
+    it("applies requests one at a time in arrival order", async () => {
+      const { state, written } = createState();
+      const order: string[] = [];
+      deliver(state, {
+        ...request,
+        id: 21,
+        params: { edit: { changes: {}, label: "a" } },
+      });
+      deliver(state, {
+        ...request,
+        id: 22,
+        params: { edit: { changes: {}, label: "b" } },
+      });
+      new ConnectionHandler(state, {
+        applyEdit: async (edit) => {
+          const label = (edit as { label?: string }).label ?? "";
+          order.push("start " + label);
+          await new Promise((r) => setTimeout(r, label === "a" ? 30 : 0));
+          order.push("end " + label);
+          return { applied: true };
+        },
+      }).processBuffer();
+
+      await vi.waitFor(() => expect(written).toHaveLength(2));
+      expect(order).toEqual(["start a", "end a", "start b", "end b"]);
+      expect(written.map((w) => w.id)).toEqual([21, 22]);
+    });
   });
 });
