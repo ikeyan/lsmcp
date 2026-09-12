@@ -60,16 +60,19 @@ export class ConnectionHandler {
         this.state.buffer = this.state.buffer.substring(headerEnd + 4);
       }
 
-      if (this.state.buffer.length < this.state.contentLength) {
+      // Content-Length counts UTF-8 bytes, not string characters
+      const bytes = Buffer.from(this.state.buffer, "utf8");
+      if (bytes.length < this.state.contentLength) {
         // Wait for more data
         return;
       }
 
-      const messageBody = this.state.buffer.substring(
-        0,
-        this.state.contentLength,
-      );
-      this.state.buffer = this.state.buffer.substring(this.state.contentLength);
+      const messageBody = bytes
+        .subarray(0, this.state.contentLength)
+        .toString("utf8");
+      this.state.buffer = bytes
+        .subarray(this.state.contentLength)
+        .toString("utf8");
       this.state.contentLength = -1;
 
       try {

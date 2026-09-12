@@ -147,4 +147,24 @@ describe("ConnectionHandler server-to-client requests", () => {
     expect(written).toEqual([]);
     expect(state.diagnostics.get("file:///project/a.ts")).toEqual([]);
   });
+  it("frames by byte length so multibyte text does not desync the stream", () => {
+    // tsc --lsp logs timings like "528.041µs"; µ is 2 bytes but 1 character
+    const { state, written } = createState();
+    deliver(state, {
+      jsonrpc: "2.0",
+      method: "window/logMessage",
+      params: { type: 3, message: "handled in 528.041µs" },
+    });
+    deliver(state, {
+      jsonrpc: "2.0",
+      id: 9,
+      method: "window/workDoneProgress/create",
+      params: { token: "t" },
+    });
+
+    new ConnectionHandler(state).processBuffer();
+
+    expect(written).toEqual([{ jsonrpc: "2.0", id: 9, result: null }]);
+    expect(state.buffer).toBe("");
+  });
 });
