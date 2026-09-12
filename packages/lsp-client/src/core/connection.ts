@@ -40,39 +40,33 @@ export class ConnectionHandler {
   constructor(private state: LSPProcessState) {}
 
   processBuffer(): void {
-    while (this.state.buffer.length > 0) {
+    for (;;) {
       if (this.state.contentLength === -1) {
-        // Look for Content-Length header
-        const headerEnd = this.state.buffer.indexOf("\r\n\r\n");
+        const joined = this.joinChunks();
+        const headerEnd = joined.indexOf("\r\n\r\n");
         if (headerEnd === -1) {
           return;
         }
-
-        const header = this.state.buffer.substring(0, headerEnd);
+        const header = joined.subarray(0, headerEnd).toString("utf8");
         const contentLengthMatch = header.match(/Content-Length: (\d+)/);
+        this.setChunks(joined.subarray(headerEnd + 4));
         if (!contentLengthMatch) {
           debug("Invalid LSP header:", header);
-          this.state.buffer = this.state.buffer.substring(headerEnd + 4);
           continue;
         }
-
         this.state.contentLength = parseInt(contentLengthMatch[1], 10);
-        this.state.buffer = this.state.buffer.substring(headerEnd + 4);
       }
 
-      // Content-Length counts UTF-8 bytes, not string characters
-      const bytes = Buffer.from(this.state.buffer, "utf8");
-      if (bytes.length < this.state.contentLength) {
-        // Wait for more data
+      // Content-Length counts UTF-8 bytes; wait without touching the chunks
+      if (this.state.bufferedBytes < this.state.contentLength) {
         return;
       }
 
-      const messageBody = bytes
+      const joined = this.joinChunks();
+      const messageBody = joined
         .subarray(0, this.state.contentLength)
         .toString("utf8");
-      this.state.buffer = bytes
-        .subarray(this.state.contentLength)
-        .toString("utf8");
+      this.setChunks(joined.subarray(this.state.contentLength));
       this.state.contentLength = -1;
 
       try {
@@ -82,6 +76,18 @@ export class ConnectionHandler {
         debug("Failed to parse LSP message:", messageBody, error);
       }
     }
+  }
+
+  private joinChunks(): Buffer {
+    if (this.state.chunks.length > 1) {
+      this.state.chunks = [Buffer.concat(this.state.chunks)];
+    }
+    return this.state.chunks[0] ?? Buffer.alloc(0);
+  }
+
+  private setChunks(rest: Buffer): void {
+    this.state.chunks = rest.length > 0 ? [rest] : [];
+    this.state.bufferedBytes = rest.length;
   }
 
   private handleMessage(message: LSPMessage): void {
