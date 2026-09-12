@@ -2,6 +2,7 @@
  * Workspace edit management
  */
 
+import { fileURLToPath } from "url";
 import type { WorkspaceEdit } from "../protocol/types/index.ts";
 import type { IFileSystem } from "../interfaces.ts";
 import { applyTextEdits } from "../utils/textEdits.ts";
@@ -20,7 +21,7 @@ export async function applyWorkspaceEditManually(
     }
 
     // Convert file:// URI to file path
-    const filePath = uri.startsWith("file://") ? uri.slice(7) : uri;
+    const filePath = uri.startsWith("file://") ? fileURLToPath(uri) : uri;
 
     // Read current content
     const currentContent = await fileSystemApi.readFile(filePath);
