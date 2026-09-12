@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { ChildProcess } from "child_process";
 import { ConnectionHandler } from "./connection.ts";
 import { createInitialState, type LSPProcessState } from "./state.ts";
@@ -33,8 +33,6 @@ function deliver(state: LSPProcessState, message: Record<string, unknown>) {
 
 describe("ConnectionHandler server-to-client requests", () => {
   it("accepts a didChangeConfiguration registration", () => {
-    // tsgo (tsc --lsp) sends this right after initialize and blocks on it;
-    // the client never changes configuration, so the registration holds.
     const { state, written } = createState();
     deliver(state, {
       jsonrpc: "2.0",
@@ -192,5 +190,141 @@ describe("ConnectionHandler server-to-client requests", () => {
     handler.processBuffer();
 
     expect(written).toEqual([{ jsonrpc: "2.0", id: 11, result: null }]);
+  });
+
+  describe("workspace/applyEdit", () => {
+    const request = {
+      jsonrpc: "2.0",
+      id: 20,
+      method: "workspace/applyEdit",
+      params: { edit: { changes: {} } },
+    };
+
+    it("answers with the handler's result", async () => {
+      const { state, written } = createState();
+      deliver(state, request);
+      new ConnectionHandler(state, {
+        applyEdit: async () => ({ applied: true }),
+      }).processBuffer();
+
+      await vi.waitFor(() => expect(written).toHaveLength(1));
+      expect(written).toEqual([
+        { jsonrpc: "2.0", id: 20, result: { applied: true } },
+      ]);
+    });
+
+    it("turns a throwing handler into an InternalError response", async () => {
+      const { state, written } = createState();
+      deliver(state, request);
+      new ConnectionHandler(state, {
+        applyEdit: async () => {
+          throw new Error("disk on fire");
+        },
+      }).processBuffer();
+
+      await vi.waitFor(() => expect(written).toHaveLength(1));
+      expect(written).toEqual([
+        {
+          jsonrpc: "2.0",
+          id: 20,
+          error: { code: -32603, message: "disk on fire" },
+        },
+      ]);
+    });
+
+    it("is MethodNotFound without a handler", () => {
+      const { state, written } = createState();
+      deliver(state, request);
+      new ConnectionHandler(state).processBuffer();
+
+      expect(written).toEqual([
+        {
+          jsonrpc: "2.0",
+          id: 20,
+          error: {
+            code: -32601,
+            message: "Method not found: workspace/applyEdit",
+          },
+        },
+      ]);
+    });
+
+    it("rejects a request without params.edit instead of leaving it unanswered", () => {
+      const { state, written } = createState();
+      deliver(state, { ...request, params: {} });
+      new ConnectionHandler(state, {
+        applyEdit: async () => ({ applied: true }),
+      }).processBuffer();
+
+      expect(written).toEqual([
+        {
+          jsonrpc: "2.0",
+          id: 20,
+          error: {
+            code: -32602,
+            message: "workspace/applyEdit: params.edit is required",
+          },
+        },
+      ]);
+    });
+
+    it("keeps serving later requests after a response could not be sent", async () => {
+      const { state, written } = createState();
+      const stdin = state.process!.stdin as unknown as {
+        write: (chunk: string) => boolean;
+      };
+      const realWrite = stdin.write;
+      let failOnce = true;
+      stdin.write = (chunk: string) => {
+        if (failOnce) {
+          failOnce = false;
+          throw new Error("EPIPE");
+        }
+        return realWrite(chunk);
+      };
+      const handled: number[] = [];
+      deliver(state, { ...request, id: 31 });
+      deliver(state, { ...request, id: 32 });
+      new ConnectionHandler(state, {
+        applyEdit: async () => {
+          handled.push(handled.length + 1);
+          return { applied: true };
+        },
+      }).processBuffer();
+
+      await vi.waitFor(() => expect(written).toHaveLength(1));
+      expect(handled).toEqual([1, 2]);
+      expect(written).toEqual([
+        { jsonrpc: "2.0", id: 32, result: { applied: true } },
+      ]);
+    });
+
+    it("applies requests one at a time in arrival order", async () => {
+      const { state, written } = createState();
+      const order: string[] = [];
+      deliver(state, {
+        ...request,
+        id: 21,
+        params: { edit: { changes: {}, label: "a" } },
+      });
+      deliver(state, {
+        ...request,
+        id: 22,
+        params: { edit: { changes: {}, label: "b" } },
+      });
+      new ConnectionHandler(state, {
+        applyEdit: async (edit) => {
+          const label = (edit as { label?: string }).label ?? "";
+          order.push("start " + label);
+          await new Promise((r) => setTimeout(r, label === "a" ? 30 : 0));
+          order.push("end " + label);
+          return { applied: true };
+        },
+      }).processBuffer();
+
+      await vi.waitFor(() => expect(written).toHaveLength(2));
+      expect(order).toEqual(["start a", "end a", "start b", "end b"]);
+      expect(written.map((w) => w.id)).toEqual([21, 22]);
+    });
   });
 });
