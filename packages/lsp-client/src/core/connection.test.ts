@@ -28,19 +28,53 @@ function deliver(state: LSPProcessState, message: Record<string, unknown>) {
 }
 
 describe("ConnectionHandler server-to-client requests", () => {
-  it("acknowledges client/registerCapability so the server can proceed", () => {
-    // tsgo (tsc --lsp) sends this right after initialize and blocks on it
+  it("accepts a didChangeConfiguration registration", () => {
+    // tsgo (tsc --lsp) sends this right after initialize and blocks on it;
+    // the client never changes configuration, so the registration holds.
     const { state, written } = createState();
     deliver(state, {
       jsonrpc: "2.0",
       id: "ts1",
       method: "client/registerCapability",
-      params: { registrations: [] },
+      params: {
+        registrations: [
+          { id: "cfg", method: "workspace/didChangeConfiguration" },
+        ],
+      },
     });
 
     new ConnectionHandler(state).processBuffer();
 
     expect(written).toEqual([{ jsonrpc: "2.0", id: "ts1", result: null }]);
+  });
+
+  it("rejects a registration it cannot honour instead of faking success", () => {
+    const { state, written } = createState();
+    deliver(state, {
+      jsonrpc: "2.0",
+      id: "ts2",
+      method: "client/registerCapability",
+      params: {
+        registrations: [
+          { id: "cfg", method: "workspace/didChangeConfiguration" },
+          { id: "watch", method: "workspace/didChangeWatchedFiles" },
+        ],
+      },
+    });
+
+    new ConnectionHandler(state).processBuffer();
+
+    expect(written).toEqual([
+      {
+        jsonrpc: "2.0",
+        id: "ts2",
+        error: {
+          code: -32602,
+          message:
+            "Cannot honour registration of: workspace/didChangeWatchedFiles",
+        },
+      },
+    ]);
   });
 
   it("acknowledges window/workDoneProgress/create", () => {

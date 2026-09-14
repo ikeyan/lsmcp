@@ -18,7 +18,6 @@ import { debug } from "../utils/debug.ts";
 
 /** Server-to-client requests that only need an acknowledgement. */
 const ACKNOWLEDGED_SERVER_REQUESTS = new Set([
-  "client/registerCapability",
   "client/unregisterCapability",
   "window/workDoneProgress/create",
   "workspace/codeLens/refresh",
@@ -28,6 +27,14 @@ const ACKNOWLEDGED_SERVER_REQUESTS = new Set([
   "workspace/inlineValue/refresh",
   "workspace/semanticTokens/refresh",
 ]);
+
+/**
+ * Dynamic registrations this client can honour: notifications it would send
+ * if the event happened. The client never changes configuration, so a
+ * didChangeConfiguration registration is satisfied; it has no file watcher,
+ * so didChangeWatchedFiles is not.
+ */
+const HONOURED_REGISTRATIONS = new Set(["workspace/didChangeConfiguration"]);
 
 export class ConnectionHandler {
   constructor(private state: LSPProcessState) {}
@@ -152,7 +159,23 @@ export class ConnectionHandler {
     } else if (isLSPRequest(message)) {
       // Leaving a request unanswered stalls servers that wait for it, e.g.
       // TypeScript 7 `tsc --lsp` after client/registerCapability.
-      if (ACKNOWLEDGED_SERVER_REQUESTS.has(message.method)) {
+      if (message.method === "client/registerCapability") {
+        const registrations =
+          (message.params as { registrations?: Array<{ method: string }> })
+            ?.registrations ?? [];
+        const unsupported = registrations
+          .map((r) => r.method)
+          .filter((method) => !HONOURED_REGISTRATIONS.has(method));
+        if (unsupported.length === 0) {
+          this.sendResponse(message.id, null);
+        } else {
+          this.sendError(
+            message.id,
+            -32602,
+            `Cannot honour registration of: ${unsupported.join(", ")}`,
+          );
+        }
+      } else if (ACKNOWLEDGED_SERVER_REQUESTS.has(message.method)) {
         this.sendResponse(message.id, null);
       } else {
         this.sendError(
