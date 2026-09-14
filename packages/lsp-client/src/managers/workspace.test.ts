@@ -41,7 +41,7 @@ describe("applyWorkspaceEdit", () => {
 
   it("reports documentChanges as not applied instead of ignoring them", async () => {
     const result = await applyWorkspaceEdit(
-      { documentChanges: [] } as never,
+      { documentChanges: [] },
       nodeFileSystemApi,
     );
 

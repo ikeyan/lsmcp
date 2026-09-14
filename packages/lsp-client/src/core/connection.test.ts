@@ -251,6 +251,56 @@ describe("ConnectionHandler server-to-client requests", () => {
       ]);
     });
 
+    it("rejects a request without params.edit instead of leaving it unanswered", () => {
+      const { state, written } = createState();
+      deliver(state, { ...request, params: {} });
+      new ConnectionHandler(state, {
+        applyEdit: async () => ({ applied: true }),
+      }).processBuffer();
+
+      expect(written).toEqual([
+        {
+          jsonrpc: "2.0",
+          id: 20,
+          error: {
+            code: -32602,
+            message: "workspace/applyEdit: params.edit is required",
+          },
+        },
+      ]);
+    });
+
+    it("keeps serving later requests after a response could not be sent", async () => {
+      const { state, written } = createState();
+      const stdin = state.process!.stdin as unknown as {
+        write: (chunk: string) => boolean;
+      };
+      const realWrite = stdin.write;
+      let failOnce = true;
+      stdin.write = (chunk: string) => {
+        if (failOnce) {
+          failOnce = false;
+          throw new Error("EPIPE");
+        }
+        return realWrite(chunk);
+      };
+      const handled: number[] = [];
+      deliver(state, { ...request, id: 31 });
+      deliver(state, { ...request, id: 32 });
+      new ConnectionHandler(state, {
+        applyEdit: async () => {
+          handled.push(handled.length + 1);
+          return { applied: true };
+        },
+      }).processBuffer();
+
+      await vi.waitFor(() => expect(written).toHaveLength(1));
+      expect(handled).toEqual([1, 2]);
+      expect(written).toEqual([
+        { jsonrpc: "2.0", id: 32, result: { applied: true } },
+      ]);
+    });
+
     it("applies requests one at a time in arrival order", async () => {
       const { state, written } = createState();
       const order: string[] = [];

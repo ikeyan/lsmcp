@@ -13,7 +13,7 @@ function toPath(uri: string): string {
   return uri.startsWith("file://") ? fileURLToPath(uri) : uri;
 }
 
-/** Apply `edit.changes` to the files on disk; failure is reported in the result, not thrown. */
+/** Applies `edit.changes` to the files on disk. Failures are returned, not thrown. */
 export async function applyWorkspaceEdit(
   edit: WorkspaceEdit,
   fileSystemApi: IFileSystem,
@@ -46,9 +46,8 @@ export async function applyWorkspaceEdit(
 }
 
 /**
- * Handle a server's workspace/applyEdit: apply it, then resend the new
- * content of every changed document that is open so the server's copy
- * matches the file before it receives the response.
+ * Applies a server's workspace/applyEdit and, before returning, sends the new
+ * content of every changed document that is open (textDocument/didChange).
  */
 export async function applyEditFromServer(
   edit: WorkspaceEdit,
@@ -61,8 +60,8 @@ export async function applyEditFromServer(
     return result;
   }
   for (const uri of Object.keys(edit.changes ?? {})) {
+    const content = await fileSystemApi.readFile(toPath(uri));
     if (documentManager.isDocumentOpen(uri)) {
-      const content = await fileSystemApi.readFile(toPath(uri));
       documentManager.updateDocument(uri, content, sendNotification);
     }
   }

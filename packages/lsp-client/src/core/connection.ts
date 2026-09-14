@@ -262,7 +262,15 @@ export class ConnectionHandler {
       );
       return;
     }
-    const { edit } = message.params as { edit: WorkspaceEdit };
+    const edit = (message.params as { edit?: WorkspaceEdit } | undefined)?.edit;
+    if (!edit) {
+      this.sendError(
+        message.id,
+        -32602,
+        "workspace/applyEdit: params.edit is required",
+      );
+      return;
+    }
     this.applyEditQueue = this.applyEditQueue
       .then(() => handler(edit))
       .then(
@@ -273,6 +281,10 @@ export class ConnectionHandler {
             -32603,
             error instanceof Error ? error.message : String(error),
           ),
+      )
+      // a failed send (e.g. the process is gone) must not block later requests
+      .catch((error: unknown) =>
+        debug("workspace/applyEdit response failed:", error),
       );
   }
 
