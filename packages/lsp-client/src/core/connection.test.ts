@@ -328,3 +328,43 @@ describe("ConnectionHandler server-to-client requests", () => {
     });
   });
 });
+
+describe("ConnectionHandler.sendRequest", () => {
+  it("rejects without registering a handler or timer when there is no process", async () => {
+    vi.useFakeTimers();
+    try {
+      const { state } = createState();
+      state.process = null;
+      const connection = new ConnectionHandler(state);
+
+      await expect(connection.sendRequest("initialize")).rejects.toThrow(
+        "LSP server not started",
+      );
+      expect(state.responseHandlers.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("ConnectionHandler.rejectPendingRequests", () => {
+  it("fails every waiting request and clears its timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const { state } = createState();
+      const connection = new ConnectionHandler(state);
+      const initialize = connection.sendRequest("initialize");
+      const hover = connection.sendRequest("textDocument/hover");
+
+      connection.rejectPendingRequests(new Error("server exited"));
+
+      await expect(initialize).rejects.toThrow("server exited");
+      await expect(hover).rejects.toThrow("server exited");
+      expect(state.responseHandlers.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

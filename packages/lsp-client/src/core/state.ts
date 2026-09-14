@@ -20,7 +20,7 @@ export interface LSPProcessState {
     {
       resolve: (value: any) => void;
       reject: (error: Error) => void;
-      timer?: NodeJS.Timeout;
+      timer: NodeJS.Timeout;
     }
   >;
   /** Unparsed stdout bytes; written only by ConnectionHandler.receive/processBuffer */

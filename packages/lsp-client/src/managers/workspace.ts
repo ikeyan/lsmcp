@@ -13,10 +13,18 @@ function toPath(uri: string): string {
   return uri.startsWith("file://") ? fileURLToPath(uri) : uri;
 }
 
-/** Applies `edit.changes` to the files on disk. Failures are returned, not thrown. */
+/**
+ * Applies `edit.changes` to the files on disk and to the open documents. An
+ * open document's edits are applied to the text the server was last given,
+ * and its new text is sent as textDocument/didChange right after the file is
+ * written. Every new text is computed before the first write. Failures are
+ * returned.
+ */
 export async function applyWorkspaceEdit(
   edit: WorkspaceEdit,
   fileSystemApi: IFileSystem,
+  documentManager: DocumentManager,
+  sendNotification: (method: string, params: unknown) => void,
 ): Promise<ApplyWorkspaceEditResponse> {
   if ("documentChanges" in edit && edit.documentChanges !== undefined) {
     return {
@@ -25,16 +33,21 @@ export async function applyWorkspaceEdit(
     };
   }
   try {
+    const newContents: Array<[uri: string, content: string]> = [];
     for (const [uri, edits] of Object.entries(edit.changes ?? {})) {
       if (!edits || edits.length === 0) {
         continue;
       }
-      const filePath = toPath(uri);
-      const currentContent = await fileSystemApi.readFile(filePath);
-      await fileSystemApi.writeFile(
-        filePath,
-        applyTextEdits(currentContent, edits),
-      );
+      const currentContent =
+        documentManager.getDocumentText(uri) ??
+        (await fileSystemApi.readFile(toPath(uri)));
+      newContents.push([uri, applyTextEdits(currentContent, edits)]);
+    }
+    for (const [uri, content] of newContents) {
+      await fileSystemApi.writeFile(toPath(uri), content);
+      if (documentManager.isDocumentOpen(uri)) {
+        documentManager.updateDocument(uri, content, sendNotification);
+      }
     }
     return { applied: true };
   } catch (err) {
@@ -43,27 +56,4 @@ export async function applyWorkspaceEdit(
       failureReason: err instanceof Error ? err.message : String(err),
     };
   }
-}
-
-/**
- * Applies a server's workspace/applyEdit and, before returning, sends the new
- * content of every changed document that is open (textDocument/didChange).
- */
-export async function applyEditFromServer(
-  edit: WorkspaceEdit,
-  fileSystemApi: IFileSystem,
-  documentManager: DocumentManager,
-  sendNotification: (method: string, params: unknown) => void,
-): Promise<ApplyWorkspaceEditResponse> {
-  const result = await applyWorkspaceEdit(edit, fileSystemApi);
-  if (!result.applied) {
-    return result;
-  }
-  for (const uri of Object.keys(edit.changes ?? {})) {
-    const content = await fileSystemApi.readFile(toPath(uri));
-    if (documentManager.isDocumentOpen(uri)) {
-      documentManager.updateDocument(uri, content, sendNotification);
-    }
-  }
-  return result;
 }

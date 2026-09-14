@@ -125,9 +125,7 @@ export class ConnectionHandler {
     );
 
     if (handler) {
-      if (handler.timer) {
-        clearTimeout(handler.timer);
-      }
+      clearTimeout(handler.timer);
       this.state.responseHandlers.delete(message.id);
 
       if (message.error) {
@@ -235,14 +233,29 @@ export class ConnectionHandler {
         params: params as Record<string, unknown>,
       };
 
+      try {
+        this.sendMessage(request);
+      } catch (error) {
+        reject(error);
+        return;
+      }
+
       const timer = setTimeout(() => {
         this.state.responseHandlers.delete(id);
         reject(new Error(`LSP request timeout: ${method}`));
       }, timeout);
 
       this.state.responseHandlers.set(id, { resolve, reject, timer });
-      this.sendMessage(request);
     });
+  }
+
+  /** Fails every request still waiting for a response */
+  rejectPendingRequests(error: Error): void {
+    for (const handler of this.state.responseHandlers.values()) {
+      clearTimeout(handler.timer);
+      handler.reject(error);
+    }
+    this.state.responseHandlers.clear();
   }
 
   sendNotification(method: string, params?: unknown): void {

@@ -28,10 +28,7 @@ import { LifecycleManager } from "./lifecycle.ts";
 import { DocumentManager } from "../managers/document-manager.ts";
 import { DiagnosticsManager } from "../managers/diagnostics.ts";
 import { createFeatureCommands } from "../utils/features.ts";
-import {
-  applyEditFromServer,
-  applyWorkspaceEdit,
-} from "../managers/workspace.ts";
+import { applyWorkspaceEdit } from "../managers/workspace.ts";
 import { getLanguageIdFromPath } from "../utils/language.ts";
 import { debug } from "../utils/debug.ts";
 import type { IFileSystem, IServerCharacteristics } from "../interfaces.ts";
@@ -93,7 +90,6 @@ export interface InternalLSPClient {
   ): Promise<WorkspaceEdit | null>;
   applyEdit(
     edit: WorkspaceEdit,
-    label?: string,
   ): Promise<{ applied: boolean; failureReason?: string }>;
 
   // Advanced features
@@ -115,12 +111,11 @@ export interface InternalLSPClient {
 export function createLSPClient(config: LSPClientConfig): InternalLSPClient {
   const state = createInitialState(config);
   const documentManager = new DocumentManager();
-  const connection = new ConnectionHandler(state, {
-    applyEdit: (edit) =>
-      applyEditFromServer(edit, state.fileSystemApi, documentManager, (m, p) =>
-        connection.sendNotification(m, p),
-      ),
-  });
+  const applyEdit = (edit: WorkspaceEdit) =>
+    applyWorkspaceEdit(edit, state.fileSystemApi, documentManager, (m, p) =>
+      connection.sendNotification(m, p),
+    );
+  const connection = new ConnectionHandler(state, { applyEdit });
   const lifecycle = new LifecycleManager(state, connection, config);
   const diagnosticsManager = new DiagnosticsManager(state.eventEmitter);
   const commands = createFeatureCommands();
@@ -412,11 +407,7 @@ export function createLSPClient(config: LSPClientConfig): InternalLSPClient {
       }
     },
 
-    applyEdit(
-      edit: WorkspaceEdit,
-    ): Promise<{ applied: boolean; failureReason?: string }> {
-      return applyWorkspaceEdit(edit, state.fileSystemApi);
-    },
+    applyEdit,
 
     // Advanced features
     sendRequest: connection.sendRequest.bind(connection),
