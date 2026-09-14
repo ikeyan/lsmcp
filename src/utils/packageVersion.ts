@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "fs";
+import { readFileSync } from "fs";
 import { join } from "path";
 
 /**
@@ -9,10 +9,10 @@ export function installedPackageMajor(
   nodeModulesDir: string,
   packageName: string,
 ): number | undefined {
-  const packageJsonPath = join(nodeModulesDir, packageName, "package.json");
-  if (!existsSync(packageJsonPath)) return undefined;
   try {
-    const { version } = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
+    const { version } = JSON.parse(
+      readFileSync(join(nodeModulesDir, packageName, "package.json"), "utf-8"),
+    );
     const major = parseInt(String(version), 10);
     return Number.isNaN(major) ? undefined : major;
   } catch {

@@ -69,119 +69,86 @@ describe("binFinder", () => {
       });
     });
 
-    describe("node_modules strategy with requires", () => {
+    describe("node_modules strategy with override", () => {
       const strategy: BinFindStrategy = {
         strategies: [
           {
             type: "node_modules",
-            names: ["tsc"],
-            requires: { package: "typescript", minMajor: 7 },
+            names: ["typescript-language-server"],
+            override: {
+              package: "typescript",
+              minMajor: 7,
+              names: ["tsc"],
+              args: ["--lsp", "--stdio"],
+            },
           },
         ],
-        defaultArgs: ["--lsp", "--stdio"],
+        defaultArgs: ["--stdio"],
       };
       const projectRoot = "/test/project";
-      const tscPath = join(projectRoot, "node_modules", ".bin", "tsc");
-      const typescriptPackageJson = join(
-        projectRoot,
-        "node_modules",
-        "typescript",
-        "package.json",
-      );
+      const bins = {
+        tsc: join(projectRoot, "node_modules", ".bin", "tsc"),
+        tls: join(
+          projectRoot,
+          "node_modules",
+          ".bin",
+          "typescript-language-server",
+        ),
+        parentTsc: "/test/node_modules/.bin/tsc",
+      };
+      const packageJsons: Record<string, "local" | "parent"> = {
+        [join(projectRoot, "node_modules", "typescript", "package.json")]:
+          "local",
+        "/test/node_modules/typescript/package.json": "parent",
+      };
 
-      function installTypescript(version: string) {
-        vi.mocked(fs.existsSync).mockImplementation(
-          (path) => path === tscPath || path === typescriptPackageJson,
+      function layout(
+        existing: string[],
+        versions: Partial<Record<"local" | "parent", string>>,
+      ) {
+        vi.mocked(fs.existsSync).mockImplementation((path) =>
+          existing.includes(String(path)),
         );
         vi.mocked(fs.readFileSync).mockImplementation((path) => {
-          if (path === typescriptPackageJson) {
-            return JSON.stringify({ name: "typescript", version });
-          }
+          const level = packageJsons[String(path)];
+          const version = level && versions[level];
+          if (version) return JSON.stringify({ version });
           throw new Error(`ENOENT: ${String(path)}`);
         });
       }
 
-      it("accepts the binary when the package meets the minimum major", () => {
-        installTypescript("7.0.2");
+      it("searches the override names with their args when the package is new enough", () => {
+        layout([bins.tsc, bins.tls], { local: "7.0.2" });
 
         expect(findBinary(strategy, projectRoot)).toEqual({
-          command: tscPath,
+          command: bins.tsc,
           args: ["--lsp", "--stdio"],
         });
       });
 
-      it("uses the item's own args over defaultArgs", () => {
-        installTypescript("7.0.2");
-        const withArgs: BinFindStrategy = {
-          strategies: [
-            {
-              type: "node_modules",
-              names: ["tsc"],
-              args: ["--lsp", "--stdio"],
-              requires: { package: "typescript", minMajor: 7 },
-            },
-            { type: "node_modules", names: ["typescript-language-server"] },
-          ],
-          defaultArgs: ["--stdio"],
-        };
-
-        expect(findBinary(withArgs, projectRoot)).toEqual({
-          command: tscPath,
-          args: ["--lsp", "--stdio"],
-        });
-      });
-
-      it("skips the binary when the package is too old", () => {
-        installTypescript("5.9.2");
-
-        expect(findBinary(strategy, projectRoot)).toBeNull();
-      });
-
-      it("skips the binary when the package is not installed", () => {
-        vi.mocked(fs.existsSync).mockImplementation((path) => path === tscPath);
-
-        expect(findBinary(strategy, projectRoot)).toBeNull();
-      });
-
-      it("does not skip past a too-old local install to a newer parent", () => {
-        const parentTsc = "/test/node_modules/.bin/tsc";
-        const parentPackageJson = "/test/node_modules/typescript/package.json";
-        vi.mocked(fs.existsSync).mockImplementation((path) =>
-          [
-            tscPath,
-            typescriptPackageJson,
-            parentTsc,
-            parentPackageJson,
-          ].includes(String(path)),
-        );
-        vi.mocked(fs.readFileSync).mockImplementation((path) => {
-          if (path === typescriptPackageJson) {
-            return JSON.stringify({ version: "5.9.2" });
-          }
-          if (path === parentPackageJson) {
-            return JSON.stringify({ version: "7.1.0" });
-          }
-          throw new Error(`ENOENT: ${String(path)}`);
-        });
-
-        expect(findBinary(strategy, projectRoot)).toBeNull();
-      });
-
-      it("walks up to a parent install when the package is absent locally", () => {
-        const parentTsc = "/test/node_modules/.bin/tsc";
-        const parentPackageJson = "/test/node_modules/typescript/package.json";
-        vi.mocked(fs.existsSync).mockImplementation((path) =>
-          [parentTsc, parentPackageJson].includes(String(path)),
-        );
-        vi.mocked(fs.readFileSync).mockImplementation((path) => {
-          if (path === parentPackageJson) {
-            return JSON.stringify({ version: "7.1.0" });
-          }
-          throw new Error(`ENOENT: ${String(path)}`);
-        });
+      it("searches the plain names when the package is too old", () => {
+        layout([bins.tsc, bins.tls], { local: "5.9.2" });
 
         expect(findBinary(strategy, projectRoot)).toEqual({
-          command: parentTsc,
+          command: bins.tls,
+          args: ["--stdio"],
+        });
+      });
+
+      it("searches the plain names when the package is not installed", () => {
+        layout([bins.tsc, bins.tls], {});
+
+        expect(findBinary(strategy, projectRoot)).toEqual({
+          command: bins.tls,
+          args: ["--stdio"],
+        });
+      });
+
+      it("decides per node_modules directory while walking up", () => {
+        layout([bins.tsc, bins.parentTsc], { local: "5.9.2", parent: "7.1.0" });
+
+        expect(findBinary(strategy, projectRoot)).toEqual({
+          command: bins.parentTsc,
           args: ["--lsp", "--stdio"],
         });
       });

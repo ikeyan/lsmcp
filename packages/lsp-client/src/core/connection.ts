@@ -16,12 +16,7 @@ import {
 import type { LSPProcessState } from "./state.ts";
 import { debug } from "../utils/debug.ts";
 
-/**
- * Server-to-client requests that only need an acknowledgement: capability
- * registration, progress tokens and "please refresh" requests. Anything else
- * (window/showMessageRequest, workspace/applyEdit, ...) is answered with
- * MethodNotFound because we cannot honour it.
- */
+/** Server-to-client requests that only need an acknowledgement. */
 const ACKNOWLEDGED_SERVER_REQUESTS = new Set([
   "client/registerCapability",
   "client/unregisterCapability",
@@ -155,9 +150,8 @@ export class ConnectionHandler {
       });
       this.sendResponse((message as LSPRequest).id, configurations);
     } else if (isLSPRequest(message)) {
-      // Every other server-to-client request still needs an answer: tsgo
-      // (TypeScript 7 `tsc --lsp`) sends client/registerCapability right after
-      // initialize and does not serve further requests until it is answered.
+      // Leaving a request unanswered stalls servers that wait for it, e.g.
+      // TypeScript 7 `tsc --lsp` after client/registerCapability.
       if (ACKNOWLEDGED_SERVER_REQUESTS.has(message.method)) {
         this.sendResponse(message.id, null);
       } else {
