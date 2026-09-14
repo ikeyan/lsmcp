@@ -57,8 +57,7 @@ describe("server-initiated workspace/applyEdit", { timeout: 30000 }, () => {
     const uri = pathToFileURL(file).toString();
     lspClient.openDocument(uri, source);
 
-    // typescript-language-server returns refactorings as commands; running
-    // one makes it send workspace/applyEdit back to us
+    // typescript-language-server returns refactorings as commands
     const range = {
       start: { line: 0, character: 0 },
       end: { line: 2, character: 1 },
@@ -80,6 +79,7 @@ describe("server-initiated workspace/applyEdit", { timeout: 30000 }, () => {
     expect(action?.command).toBeDefined();
     const command = action!.command as Command;
 
+    // running the command makes the server send workspace/applyEdit
     const result = await lspClient.sendRequest("workspace/executeCommand", {
       command: command.command,
       arguments: command.arguments,

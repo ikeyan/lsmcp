@@ -12,7 +12,7 @@ import {
   PresetRegistry,
 } from "../config/loader.ts";
 import { adapterCandidates } from "../presets/utils.ts";
-import { startFirstWorking } from "../utils/binFinder.ts";
+import { spawnFirstWorking } from "../utils/binFinder.ts";
 import {
   getOrCreateIndex,
   SymbolIndex,
@@ -29,7 +29,6 @@ import {
   createLSPSymbolProvider,
   type LSPClient,
 } from "@internal/lsp-client";
-import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 
 /**
@@ -333,13 +332,10 @@ export async function indexCommand(
         `Starting ${adapterConfig.name || adapterConfig.presetId} for indexing...`,
       );
 
-      lspClient = await startFirstWorking(
+      ({ lspClient } = await spawnFirstWorking(
         adapterCandidates(adapterConfig, projectRoot),
-        async ({ command, args }) => {
-          const lspProcess = spawn(command, args, {
-            stdio: ["pipe", "pipe", "pipe"],
-            cwd: projectRoot,
-          });
+        { stdio: ["pipe", "pipe", "pipe"], cwd: projectRoot },
+        async (lspProcess, { command }) => {
           lspProcess.on("error", (error: Error) => {
             errorLog(`Failed to start ${command}: ${error.message}`);
             if (error.message.includes("ENOENT")) {
@@ -373,7 +369,7 @@ export async function indexCommand(
           await client.start();
           return client;
         },
-      );
+      ));
 
       // Create file content provider
       const fileContentProvider = async (uri: string): Promise<string> => {

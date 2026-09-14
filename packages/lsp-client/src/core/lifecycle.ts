@@ -140,9 +140,7 @@ export class LifecycleManager {
     });
 
     this.state.process.stdout?.on("data", (data: Buffer) => {
-      this.state.chunks.push(data);
-      this.state.bufferedBytes += data.length;
-      this.connection.processBuffer();
+      this.connection.receive(data);
     });
 
     this.state.process.stderr?.on("data", (data: Buffer) => {

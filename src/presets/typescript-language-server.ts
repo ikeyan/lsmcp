@@ -19,8 +19,7 @@ export const typescriptAdapter: Preset = {
   presetId: "typescript",
   binFindStrategy: {
     strategies: [
-      // The nearest tsc is the project's compiler: TypeScript 7+ serves LSP
-      // from it, older ones are driven through typescript-language-server
+      // TypeScript 7+ `tsc` answers `--lsp --stdio`; older `tsc` rejects the flag
       { ...tscLsp("node_modules"), ifFail: languageServer },
       { ...tscLsp("global"), ifFail: languageServer },
       ...languageServer,

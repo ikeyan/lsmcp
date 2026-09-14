@@ -4,7 +4,12 @@
 
 import { existsSync } from "fs";
 import { join, dirname } from "path";
-import { execSync } from "child_process";
+import {
+  type ChildProcess,
+  execSync,
+  spawn,
+  type SpawnOptions,
+} from "child_process";
 import type { BinFindStrategy, BinFindStrategyItem } from "../config/schema.ts";
 import { mcpDebugWithPrefix } from "./mcp-logger.ts";
 
@@ -32,13 +37,14 @@ function* selfAndAncestors(dir: string): Generator<string> {
 export type Found = { command: string; args: string[] };
 
 /**
- * The binaries a strategy proposes, in order. Send `true` to next() when the
- * candidate just yielded failed to start: the item's `ifFail` strategies are
- * then tried before the following items.
+ * The binaries a strategy proposes, in order, each at most once. Send `true`
+ * to next() when the candidate just yielded failed to start: the item's
+ * `ifFail` strategies are then tried before the following items.
  */
 export function* candidateCommands(
   strategy: BinFindStrategy,
   projectRoot: string = process.cwd(),
+  seen: Set<string> = new Set(),
 ): Generator<Found, void, boolean | undefined> {
   const defaultArgs = strategy.defaultArgs || [];
   for (const item of strategy.strategies) {
@@ -47,11 +53,17 @@ export function* candidateCommands(
     if (!found) {
       continue;
     }
+    const key = JSON.stringify([found.command, found.args]);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
     const failed = yield found;
     if (failed && "ifFail" in item && item.ifFail) {
       yield* candidateCommands(
         { strategies: item.ifFail, defaultArgs },
         projectRoot,
+        seen,
       );
     }
   }
@@ -121,10 +133,10 @@ function locate(
     }
 
     case "node_modules": {
-      // The nearest node_modules/.bin that has one of the names
+      // Names in order; for each, the nearest node_modules/.bin that has it
       const args = item.args ?? defaultArgs;
-      for (const dir of selfAndAncestors(projectRoot)) {
-        for (const name of item.names) {
+      for (const name of item.names) {
+        for (const dir of selfAndAncestors(projectRoot)) {
           const bin = join(dir, "node_modules", ".bin", name);
           if (existsSync(bin)) {
             mcpDebugWithPrefix("BinFinder", `Found in node_modules: ${bin}`);
@@ -240,6 +252,22 @@ function locate(
       return null;
     }
   }
+}
+
+/**
+ * Spawn candidates in order and initialize each with `init`; the first that
+ * initializes is returned together with the command that was started.
+ */
+export function spawnFirstWorking<T>(
+  candidates: Iterator<Found, void, boolean | undefined>,
+  options: SpawnOptions,
+  init: (lspProcess: ChildProcess, found: Found) => Promise<T>,
+): Promise<{ found: Found; lspProcess: ChildProcess; lspClient: T }> {
+  return startFirstWorking(candidates, async (found) => {
+    const lspProcess = spawn(found.command, found.args, options);
+    const lspClient = await init(lspProcess, found);
+    return { found, lspProcess, lspClient };
+  });
 }
 
 type AdapterBin = {

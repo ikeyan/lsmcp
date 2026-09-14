@@ -16,7 +16,7 @@ import { highLevelTools, onboardingToolsList } from "./tools/toolLists.ts";
 import { getSerenityToolsList } from "./tools/index.ts";
 import { createGetSymbolDetailsTool } from "./tools/highlevel/indexTools.ts";
 import { adapterCandidates } from "./presets/utils.ts";
-import { startFirstWorking } from "./utils/binFinder.ts";
+import { spawnFirstWorking } from "./utils/binFinder.ts";
 import { PresetRegistry, type ExtendedLSMCPConfig } from "./config/loader.ts";
 import type { LspClientConfig } from "./config/schema.ts";
 
@@ -67,7 +67,7 @@ export async function runLanguageServerWithConfig(
     const { createAndInitializeLSPClient } = await import(
       "@internal/lsp-client"
     );
-    const { lspProcess, lspClient, found } = await startFirstWorking(
+    const { lspProcess, lspClient, found } = await spawnFirstWorking(
       adapterCandidates(
         {
           id: config.id || config.preset || "custom",
@@ -79,23 +79,15 @@ export async function runLanguageServerWithConfig(
         } as LspClientConfig,
         projectRoot,
       ),
-      async (found) => {
-        const lspProcess = spawn(found.command, found.args, {
-          cwd: projectRoot,
-          env: {
-            ...process.env,
-            ...customEnv,
-          },
-        });
-        const lspClient = await createAndInitializeLSPClient(
+      { cwd: projectRoot, env: { ...process.env, ...customEnv } },
+      (lspProcess) =>
+        createAndInitializeLSPClient(
           projectRoot,
           lspProcess,
           config.id || config.preset || "custom",
           config.initializationOptions,
           serverChars,
-        );
-        return { lspProcess, lspClient, found };
-      },
+        ),
     );
 
     // Create file system API using Node.js implementation
@@ -256,29 +248,22 @@ export async function runLanguageServer(
     const { createAndInitializeLSPClient } = await import(
       "@internal/lsp-client"
     );
-    const { lspProcess, lspClient } = await startFirstWorking(
+    const { lspProcess, lspClient } = await spawnFirstWorking(
       candidates,
-      async ({ command, args }) => {
+      { cwd: projectRoot, env: { ...process.env, ...customEnv } },
+      (lspProcess, { command, args }) => {
         debugLog(
           `[lsmcp] Using LSP command '${command}' for language '${language}'`,
         );
         fullCommand =
           args.length > 0 ? `${command} ${args.join(" ")}` : command;
-        const lspProcess = spawn(command, args, {
-          cwd: projectRoot,
-          env: {
-            ...process.env,
-            ...customEnv,
-          },
-        });
-        const lspClient = await createAndInitializeLSPClient(
+        return createAndInitializeLSPClient(
           projectRoot,
           lspProcess,
           language,
           initOptions,
           serverChars,
         );
-        return { lspProcess, lspClient };
       },
     );
 

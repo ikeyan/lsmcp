@@ -217,12 +217,20 @@ describe("binFinder", () => {
         });
       });
 
-      it("throws the last start error when every candidate fails", async () => {
+      it("throws the last start error when every candidate fails, trying each once", async () => {
         layout([local.tsc], []);
+        const attempted: string[] = [];
 
-        await expect(startWith([local.tsc, "npx"])).rejects.toThrow(
-          "npx exited with code 1",
-        );
+        await expect(
+          startFirstWorking(
+            candidateCommands(strategy, projectRoot),
+            async (found) => {
+              attempted.push(found.command);
+              throw new Error(`${found.command} exited with code 1`);
+            },
+          ),
+        ).rejects.toThrow("npx exited with code 1");
+        expect(attempted).toEqual([local.tsc, "npx"]);
       });
 
       it("findBinary is the first candidate", () => {
@@ -232,6 +240,24 @@ describe("binFinder", () => {
           command: local.tsc,
           args: ["--lsp", "--stdio"],
         });
+      });
+    });
+
+    it("prefers an earlier name in a parent over a later name in the project", () => {
+      const strategy: BinFindStrategy = {
+        strategies: [{ type: "node_modules", names: ["first", "second"] }],
+        defaultArgs: [],
+      };
+      const projectRoot = "/test/project";
+      const parentFirst = "/test/node_modules/.bin/first";
+      const localSecond = join(projectRoot, "node_modules", ".bin", "second");
+      vi.mocked(fs.existsSync).mockImplementation((path) =>
+        [parentFirst, localSecond].includes(String(path)),
+      );
+
+      expect(findBinary(strategy, projectRoot)).toEqual({
+        command: parentFirst,
+        args: [],
       });
     });
 

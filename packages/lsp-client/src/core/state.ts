@@ -23,7 +23,7 @@ export interface LSPProcessState {
       timer?: NodeJS.Timeout;
     }
   >;
-  /** Unparsed stdout bytes, joined lazily; see ConnectionHandler.processBuffer */
+  /** Unparsed stdout bytes; written only by ConnectionHandler.receive/processBuffer */
   chunks: Buffer[];
   bufferedBytes: number;
   contentLength: number;

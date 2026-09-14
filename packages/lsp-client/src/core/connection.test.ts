@@ -33,8 +33,6 @@ function deliver(state: LSPProcessState, message: Record<string, unknown>) {
 
 describe("ConnectionHandler server-to-client requests", () => {
   it("accepts a didChangeConfiguration registration", () => {
-    // tsgo (tsc --lsp) sends this right after initialize and blocks on it;
-    // the client never changes configuration, so the registration holds.
     const { state, written } = createState();
     deliver(state, {
       jsonrpc: "2.0",

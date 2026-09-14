@@ -30,12 +30,7 @@ const ACKNOWLEDGED_SERVER_REQUESTS = new Set([
   "workspace/semanticTokens/refresh",
 ]);
 
-/**
- * Dynamic registrations this client can honour: notifications it would send
- * if the event happened. The client never changes configuration, so a
- * didChangeConfiguration registration is satisfied; it has no file watcher,
- * so didChangeWatchedFiles is not.
- */
+/** Dynamic registrations this client can honour: notifications it would send if the event happened. */
 const HONOURED_REGISTRATIONS = new Set(["workspace/didChangeConfiguration"]);
 
 export type ApplyEditHandler = (
@@ -50,6 +45,13 @@ export class ConnectionHandler {
     private state: LSPProcessState,
     private handlers: { applyEdit?: ApplyEditHandler } = {},
   ) {}
+
+  /** Append raw stdout bytes and parse whatever frames are complete */
+  receive(data: Buffer): void {
+    this.state.chunks.push(data);
+    this.state.bufferedBytes += data.length;
+    this.processBuffer();
+  }
 
   processBuffer(): void {
     for (;;) {
@@ -69,7 +71,7 @@ export class ConnectionHandler {
         this.state.contentLength = parseInt(contentLengthMatch[1], 10);
       }
 
-      // Content-Length counts UTF-8 bytes; wait without touching the chunks
+      // Content-Length counts UTF-8 bytes
       if (this.state.bufferedBytes < this.state.contentLength) {
         return;
       }
@@ -282,7 +284,6 @@ export class ConnectionHandler {
             error instanceof Error ? error.message : String(error),
           ),
       )
-      // a failed send (e.g. the process is gone) must not block later requests
       .catch((error: unknown) =>
         debug("workspace/applyEdit response failed:", error),
       );
