@@ -86,6 +86,7 @@ export function findBinary(
 
       case "node_modules": {
         // Search in node_modules/.bin of the project and its ancestors
+        const args = item.args ?? defaultArgs;
         for (const name of item.names) {
           for (const dir of selfAndAncestors(projectRoot)) {
             const nodeModules = join(dir, "node_modules");
@@ -116,7 +117,7 @@ export function findBinary(
             }
 
             mcpDebugWithPrefix("BinFinder", `Found in node_modules: ${bin}`);
-            return { command: bin, args: defaultArgs };
+            return { command: bin, args };
           }
         }
         break;

@@ -14,17 +14,9 @@ export const tsgoAdapter: Preset = {
     strategies: [
       // 1. Check node_modules first (most common for JS/TS tools)
       { type: "node_modules", names: ["tsgo"] },
-      // 2. TypeScript 7+ ships the native (Go) compiler as `tsc`, and
-      //    `tsc --lsp --stdio` is the same language server as `tsgo --lsp`.
-      //    Older `tsc` has no --lsp mode, hence the version guard.
-      {
-        type: "node_modules",
-        names: ["tsc"],
-        requires: { package: "typescript", minMajor: 7 },
-      },
-      // 3. Check global installation
+      // 2. Check global installation
       { type: "global", names: ["tsgo"] },
-      // 4. Fall back to npx
+      // 3. Fall back to npx
       { type: "npx", package: "@typescript/native-preview" },
     ],
     defaultArgs: ["--lsp", "--stdio"],

@@ -110,6 +110,27 @@ describe("binFinder", () => {
         });
       });
 
+      it("uses the item's own args over defaultArgs", () => {
+        installTypescript("7.0.2");
+        const withArgs: BinFindStrategy = {
+          strategies: [
+            {
+              type: "node_modules",
+              names: ["tsc"],
+              args: ["--lsp", "--stdio"],
+              requires: { package: "typescript", minMajor: 7 },
+            },
+            { type: "node_modules", names: ["typescript-language-server"] },
+          ],
+          defaultArgs: ["--stdio"],
+        };
+
+        expect(findBinary(withArgs, projectRoot)).toEqual({
+          command: tscPath,
+          args: ["--lsp", "--stdio"],
+        });
+      });
+
       it("skips the binary when the package is too old", () => {
         installTypescript("5.9.2");
 

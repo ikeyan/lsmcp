@@ -25,21 +25,16 @@ describe("tsgoAdapter", () => {
       expect(tsgoAdapter.args).toBeUndefined();
       expect(tsgoAdapter.binFindStrategy).toBeDefined();
       expect(tsgoAdapter.binFindStrategy?.strategies).toBeDefined();
-      expect(tsgoAdapter.binFindStrategy?.strategies).toHaveLength(4);
+      expect(tsgoAdapter.binFindStrategy?.strategies).toHaveLength(3);
       expect(tsgoAdapter.binFindStrategy?.strategies[0]).toEqual({
         type: "node_modules",
         names: ["tsgo"],
       });
       expect(tsgoAdapter.binFindStrategy?.strategies[1]).toEqual({
-        type: "node_modules",
-        names: ["tsc"],
-        requires: { package: "typescript", minMajor: 7 },
-      });
-      expect(tsgoAdapter.binFindStrategy?.strategies[2]).toEqual({
         type: "global",
         names: ["tsgo"],
       });
-      expect(tsgoAdapter.binFindStrategy?.strategies[3]).toEqual({
+      expect(tsgoAdapter.binFindStrategy?.strategies[2]).toEqual({
         type: "npx",
         package: "@typescript/native-preview",
       });

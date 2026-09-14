@@ -99,6 +99,10 @@ export const binFindStrategyItemSchema = z.discriminatedUnion("type", [
     names: z
       .array(z.string())
       .describe("Binary names to search in node_modules/.bin"),
+    args: z
+      .array(z.string())
+      .optional()
+      .describe("Arguments for these binaries, overriding defaultArgs"),
     requires: z
       .object({
         package: z

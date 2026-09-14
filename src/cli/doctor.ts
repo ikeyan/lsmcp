@@ -244,8 +244,7 @@ async function checkAvailableServers(
               "npm install -g typescript typescript-language-server";
             break;
           case "tsgo":
-            server.installCommand =
-              "npm install -D typescript@7  # or: @typescript/native-preview";
+            server.installCommand = "npm install -g @typescript/native-preview";
             break;
           case "pyright":
             server.installCommand = "npm install -g pyright";
@@ -348,8 +347,7 @@ export async function doctorCommand(
           "npm install -g typescript typescript-language-server";
         break;
       case "tsgo":
-        server.installCommand =
-          "npm install -D typescript@7  # or: @typescript/native-preview";
+        server.installCommand = "npm install -g @typescript/native-preview";
         break;
       case "pyright":
         server.installCommand = "npm install -g pyright";

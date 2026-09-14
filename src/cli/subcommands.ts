@@ -358,9 +358,7 @@ export async function indexCommand(
         if (error.message.includes("ENOENT")) {
           errorLog(`Make sure ${adapterConfig.bin} is installed and in PATH`);
           if (adapterConfig.presetId === "tsgo") {
-            errorLog(
-              "Install with: npm install -D typescript@7  # or: @typescript/native-preview",
-            );
+            errorLog("Install with: npm install -g @typescript/native-preview");
           } else if (adapterConfig.presetId === "typescript") {
             errorLog(
               "Install with: npm install -g typescript typescript-language-server",
@@ -421,9 +419,7 @@ export async function indexCommand(
       ) {
         if (config.preset === "tsgo") {
           errorLog("\nTo install tsgo:");
-          errorLog(
-            "  npm install -D typescript@7  # or: @typescript/native-preview",
-          );
+          errorLog("  npm install -g @typescript/native-preview");
           errorLog("\nAlternatively, you can use a different preset:");
           errorLog("  lsmcp init -p typescript");
         } else if (config.preset === "typescript") {

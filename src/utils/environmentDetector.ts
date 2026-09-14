@@ -1,7 +1,6 @@
 import { existsSync } from "fs";
 import { join } from "path";
 import { debugLog } from "./debugLog.ts";
-import { dependencyMajor } from "./packageVersion.ts";
 
 export interface DetectedEnvironment {
   preset: string;
@@ -41,20 +40,6 @@ export function detectEnvironment(root: string): DetectedEnvironment | null {
             preset: "tsgo",
             confidence: "high",
             reason: "Found tsconfig.json with tsgo in dependencies",
-            suggestedFiles: ["**/*.ts", "**/*.tsx"],
-          };
-        }
-
-        const typescriptMajor = dependencyMajor(
-          root,
-          packageJson,
-          "typescript",
-        );
-        if (typescriptMajor !== undefined && typescriptMajor >= 7) {
-          return {
-            preset: "tsgo",
-            confidence: "high",
-            reason: `Found tsconfig.json with typescript ${typescriptMajor} (native tsc --lsp) in dependencies`,
             suggestedFiles: ["**/*.ts", "**/*.tsx"],
           };
         }

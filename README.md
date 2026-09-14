@@ -20,9 +20,8 @@ See [examples/](examples/) for working examples of each supported language confi
 ## Quick Start
 
 ```bash
-# tsgo (recommended): TypeScript 7+ (`typescript` package, native compiler)
-npm add -D @mizchi/lsmcp typescript
-# or the nightly preview build: npm add -D @mizchi/lsmcp @typescript/native-preview
+# tsgo (reccommended)
+npm add -D @mizchi/lsmcp @typescript/native-preview
 npx @mizchi/lsmcp init -p tsgo
 claude mcp add lsmcp npx -- -y @mizchi/lsmcp -p tsgo
 
@@ -153,8 +152,8 @@ Memories contain important project context, conventions, and guidelines that hel
 
 lsmcp includes built-in presets for popular language servers:
 
-- **`tsgo`** - TypeScript (Recommended). Uses `tsgo` from `@typescript/native-preview`, or `tsc --lsp` from `typescript` 7+
-- **`typescript`** - typescript-language-server
+- **`tsgo`** - TypeScript (Recommended)
+- **`typescript`** - TypeScript 7+ (`tsc --lsp` from the project's `typescript`) or typescript-language-server for older versions
 - **`rust-analyzer`** - Rust Analyser
 - **`moonbit`** - MoonBit
 - **`fsharp`** - F# (fsautocomplete)
