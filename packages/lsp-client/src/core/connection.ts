@@ -160,7 +160,6 @@ export class ConnectionHandler {
       });
       this.sendResponse((message as LSPRequest).id, configurations);
     } else if (isLSPRequest(message)) {
-      // `tsc --lsp` sends client/registerCapability and waits for the response
       if (message.method === "client/registerCapability") {
         const registrations =
           (message.params as { registrations?: Array<{ method: string }> })
