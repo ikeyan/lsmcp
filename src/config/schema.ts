@@ -134,7 +134,7 @@ const probedFields = {
     .lazy(() => z.array(binFindStrategyItemSchema))
     .optional()
     .describe(
-      "Strategies to use instead when the binary is found but does not answer an LSP initialize request with these args",
+      "Strategies to try instead when the binary is found but fails to start as a language server with these args",
     ),
 };
 

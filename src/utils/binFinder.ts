@@ -4,7 +4,7 @@
 
 import { existsSync } from "fs";
 import { join, dirname } from "path";
-import { execSync, spawnSync } from "child_process";
+import { execSync } from "child_process";
 import type { BinFindStrategy, BinFindStrategyItem } from "../config/schema.ts";
 import { mcpDebugWithPrefix } from "./mcp-logger.ts";
 
@@ -29,34 +29,72 @@ function* selfAndAncestors(dir: string): Generator<string> {
  * @param projectRoot The project root directory
  * @returns The resolved command and args, or null if not found
  */
+export type Found = { command: string; args: string[] };
+
+/**
+ * The binaries a strategy proposes, in order. Send `true` to next() when the
+ * candidate just yielded failed to start: the item's `ifFail` strategies are
+ * then tried before the following items.
+ */
+export function* candidateCommands(
+  strategy: BinFindStrategy,
+  projectRoot: string = process.cwd(),
+): Generator<Found, void, boolean | undefined> {
+  const defaultArgs = strategy.defaultArgs || [];
+  for (const item of strategy.strategies) {
+    mcpDebugWithPrefix("BinFinder", `Trying strategy: ${item.type}`);
+    const found = locate(item, projectRoot, defaultArgs);
+    if (!found) {
+      continue;
+    }
+    const failed = yield found;
+    if (failed && "ifFail" in item && item.ifFail) {
+      yield* candidateCommands(
+        { strategies: item.ifFail, defaultArgs },
+        projectRoot,
+      );
+    }
+  }
+}
+
+/** The first candidate of a strategy, or null */
 export function findBinary(
   strategy: BinFindStrategy,
   projectRoot: string = process.cwd(),
-): { command: string; args: string[] } | null {
-  mcpDebugWithPrefix(
-    "BinFinder",
-    `Searching for binary with strategy:`,
-    strategy,
-  );
-
-  const defaultArgs = strategy.defaultArgs || [];
-
-  // Try each strategy in order
-  for (const item of strategy.strategies) {
-    mcpDebugWithPrefix("BinFinder", `Trying strategy: ${item.type}`);
-    const found = findWithItem(item, projectRoot, defaultArgs);
-    if (found) {
-      return found;
-    }
-  }
-
-  mcpDebugWithPrefix("BinFinder", `Binary not found with any strategy`);
-  return null;
+): Found | null {
+  const first = candidateCommands(strategy, projectRoot).next();
+  return first.done ? null : first.value;
 }
 
-type Found = { command: string; args: string[] };
+/**
+ * Start candidates in order until one succeeds. A candidate whose `start`
+ * rejects is reported back to the generator so its fallbacks are tried;
+ * when none succeeds the last error is thrown.
+ */
+export async function startFirstWorking<T>(
+  candidates: Iterator<Found, void, boolean | undefined>,
+  start: (found: Found) => Promise<T>,
+): Promise<T> {
+  let failed: boolean | undefined;
+  let lastError: unknown = new Error("No LSP server binary specified or found");
+  for (let r = candidates.next(failed); !r.done; r = candidates.next(failed)) {
+    try {
+      const started = await start(r.value);
+      candidates.return?.();
+      return started;
+    } catch (error) {
+      mcpDebugWithPrefix(
+        "BinFinder",
+        `${r.value.command} ${r.value.args.join(" ")} failed to start: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      lastError = error;
+      failed = true;
+    }
+  }
+  throw lastError;
+}
 
-function findWithItem(
+function locate(
   item: BinFindStrategyItem,
   projectRoot: string,
   defaultArgs: string[],
@@ -90,12 +128,7 @@ function findWithItem(
           const bin = join(dir, "node_modules", ".bin", name);
           if (existsSync(bin)) {
             mcpDebugWithPrefix("BinFinder", `Found in node_modules: ${bin}`);
-            return accept(
-              { command: bin, args },
-              item,
-              projectRoot,
-              defaultArgs,
-            );
+            return { command: bin, args };
           }
         }
       }
@@ -113,12 +146,7 @@ function findWithItem(
           }).trim();
           if (globalPath) {
             mcpDebugWithPrefix("BinFinder", `Found globally: ${globalPath}`);
-            return accept(
-              { command: globalPath, args },
-              item,
-              projectRoot,
-              defaultArgs,
-            );
+            return { command: globalPath, args };
           }
         } catch {
           // Not found globally, continue to next name
@@ -214,42 +242,27 @@ function findWithItem(
   }
 }
 
-/**
- * A found binary is used as is unless the item has `ifFail`; then it must
- * answer an LSP initialize request, otherwise the `ifFail` strategies decide.
- */
-function accept(
-  found: Found,
-  item: { ifFail?: BinFindStrategyItem[] },
-  projectRoot: string,
-  defaultArgs: string[],
-): Found | null {
-  if (!item.ifFail || speaksLsp(found)) {
-    return found;
+type AdapterBin = {
+  bin?: string;
+  args?: string[];
+  binFindStrategy?: BinFindStrategy;
+};
+
+/** Every binary an adapter may run, in the order resolveAdapterCommand would pick them */
+export function* adapterCandidates(
+  adapter: AdapterBin,
+  projectRoot?: string,
+): Generator<Found, void, boolean | undefined> {
+  if (adapter.bin && adapter.args && adapter.args.length > 0) {
+    yield { command: adapter.bin, args: adapter.args };
+    return;
   }
-  mcpDebugWithPrefix(
-    "BinFinder",
-    `${found.command} ${found.args.join(" ")} did not answer initialize; trying ifFail strategies`,
-  );
-  return findBinary({ strategies: item.ifFail, defaultArgs }, projectRoot);
-}
-
-const INITIALIZE_REQUEST = JSON.stringify({
-  jsonrpc: "2.0",
-  id: 1,
-  method: "initialize",
-  params: { processId: null, rootUri: null, capabilities: {} },
-});
-
-/** Run the binary once with an initialize request on stdin; JSON-RPC frames on stdout mean it speaks LSP. */
-function speaksLsp({ command, args }: Found): boolean {
-  const result = spawnSync(command, args, {
-    input: `Content-Length: ${Buffer.byteLength(INITIALIZE_REQUEST)}\r\n\r\n${INITIALIZE_REQUEST}`,
-    encoding: "utf8",
-    stdio: ["pipe", "pipe", "ignore"],
-    timeout: 10000,
-  });
-  return (result?.stdout ?? "").trimStart().startsWith("Content-Length:");
+  if (adapter.binFindStrategy) {
+    yield* candidateCommands(adapter.binFindStrategy, projectRoot);
+  }
+  if (adapter.bin) {
+    yield { command: adapter.bin, args: adapter.args || [] };
+  }
 }
 
 /**
@@ -260,13 +273,9 @@ function speaksLsp({ command, args }: Found): boolean {
  * @returns The resolved command and args
  */
 export function resolveAdapterCommand(
-  adapter: {
-    bin?: string;
-    args?: string[];
-    binFindStrategy?: BinFindStrategy;
-  },
+  adapter: AdapterBin,
   projectRoot?: string,
-): { command: string; args: string[] } {
+): Found {
   // If bin and args are explicitly set, use them directly
   if (adapter.bin && adapter.args && adapter.args.length > 0) {
     mcpDebugWithPrefix(
