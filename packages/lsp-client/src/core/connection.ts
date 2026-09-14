@@ -160,8 +160,7 @@ export class ConnectionHandler {
       });
       this.sendResponse((message as LSPRequest).id, configurations);
     } else if (isLSPRequest(message)) {
-      // Leaving a request unanswered stalls servers that wait for it, e.g.
-      // TypeScript 7 `tsc --lsp` after client/registerCapability.
+      // `tsc --lsp` sends client/registerCapability and waits for the response
       if (message.method === "client/registerCapability") {
         const registrations =
           (message.params as { registrations?: Array<{ method: string }> })
