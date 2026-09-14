@@ -82,76 +82,90 @@ export const serverCapabilitiesSchema = z.object({
 export type ServerCapabilities = z.infer<typeof serverCapabilitiesSchema>;
 
 // Individual binary find strategy types
-export const binFindStrategyItemSchema = z.discriminatedUnion("type", [
-  // Python virtual environment
-  z.object({
-    type: z.literal("venv"),
-    names: z.array(z.string()).describe("Binary names to search in venv/bin"),
-    venvDirs: z
-      .array(z.string())
-      .default([".venv", "venv"])
-      .describe("Virtual environment directory names"),
-  }),
+const venvItemSchema = z.object({
+  type: z.literal("venv"),
+  names: z.array(z.string()).describe("Binary names to search in venv/bin"),
+  venvDirs: z
+    .array(z.string())
+    .default([".venv", "venv"])
+    .describe("Virtual environment directory names"),
+});
 
-  // Node modules
-  z.object({
-    type: z.literal("node_modules"),
-    names: z
-      .array(z.string())
-      .describe("Binary names to search in node_modules/.bin"),
-    override: z
-      .object({
-        package: z
-          .string()
-          .describe("Package installed in the same node_modules"),
-        minMajor: z
-          .number()
-          .int()
-          .describe(
-            "Major version of that package from which the override applies",
-          ),
-        names: z
-          .array(z.string())
-          .describe("Binary names to search instead of names"),
-        args: z
-          .array(z.string())
-          .optional()
-          .describe("Arguments to use instead of defaultArgs"),
-      })
-      .optional()
-      .describe(
-        "Search different binaries when the package is installed at or above the given major version (e.g. TypeScript 7+ serves LSP from tsc itself)",
-      ),
-  }),
+const uvItemSchema = z.object({
+  type: z.literal("uv"),
+  tool: z.string().describe("UV tool name (e.g., 'pyright', 'ruff')"),
+  command: z
+    .string()
+    .optional()
+    .describe("Specific command to run from the tool"),
+});
 
-  // Global installation
-  z.object({
-    type: z.literal("global"),
-    names: z.array(z.string()).describe("Binary names to search globally"),
-  }),
+const npxItemSchema = z.object({
+  type: z.literal("npx"),
+  package: z.string().describe("NPX package name"),
+});
 
-  // UV tool run
-  z.object({
-    type: z.literal("uv"),
-    tool: z.string().describe("UV tool name (e.g., 'pyright', 'ruff')"),
-    command: z
-      .string()
-      .optional()
-      .describe("Specific command to run from the tool"),
-  }),
+const pathItemSchema = z.object({
+  type: z.literal("path"),
+  path: z.string().describe("Direct path to binary"),
+});
 
-  // NPX fallback
-  z.object({
-    type: z.literal("npx"),
-    package: z.string().describe("NPX package name"),
-  }),
+/** Fields shared by the strategies that locate a binary and may probe it */
+type ProbedItem = {
+  names: string[];
+  args?: string[];
+  ifFail?: BinFindStrategyItem[];
+};
 
-  // Direct path
-  z.object({
-    type: z.literal("path"),
-    path: z.string().describe("Direct path to binary"),
-  }),
-]);
+export type BinFindStrategyItem =
+  | z.infer<typeof venvItemSchema>
+  | ({ type: "node_modules" } & ProbedItem)
+  | ({ type: "global" } & ProbedItem)
+  | z.infer<typeof uvItemSchema>
+  | z.infer<typeof npxItemSchema>
+  | z.infer<typeof pathItemSchema>;
+
+const probedFields = {
+  args: z
+    .array(z.string())
+    .optional()
+    .describe("Arguments for these binaries, instead of defaultArgs"),
+  ifFail: z
+    .lazy(() => z.array(binFindStrategyItemSchema))
+    .optional()
+    .describe(
+      "Strategies to use instead when the binary is found but does not answer an LSP initialize request with these args",
+    ),
+};
+
+const nodeModulesItemSchema = z.object({
+  type: z.literal("node_modules"),
+  names: z
+    .array(z.string())
+    .describe("Binary names to search in node_modules/.bin"),
+  ...probedFields,
+});
+
+const globalItemSchema = z.object({
+  type: z.literal("global"),
+  names: z.array(z.string()).describe("Binary names to search globally"),
+  ...probedFields,
+});
+
+export const binFindStrategyItemSchema: z.ZodType<
+  BinFindStrategyItem,
+  z.ZodTypeDef,
+  unknown
+> = z.lazy(() =>
+  z.discriminatedUnion("type", [
+    venvItemSchema,
+    nodeModulesItemSchema,
+    globalItemSchema,
+    uvItemSchema,
+    npxItemSchema,
+    pathItemSchema,
+  ]),
+);
 
 // Binary find strategy schema
 export const binFindStrategySchema = z.object({

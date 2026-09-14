@@ -69,24 +69,41 @@ describe("binFinder", () => {
       });
     });
 
-    describe("node_modules strategy with override", () => {
+    describe("probing with ifFail (typescript preset shape)", () => {
+      const tls = {
+        type: "node_modules" as const,
+        names: ["typescript-language-server"],
+      };
+      const globalTls = {
+        type: "global" as const,
+        names: ["typescript-language-server"],
+      };
+      const npxTls = {
+        type: "npx" as const,
+        package: "typescript-language-server",
+      };
       const strategy: BinFindStrategy = {
         strategies: [
           {
             type: "node_modules",
-            names: ["typescript-language-server"],
-            override: {
-              package: "typescript",
-              minMajor: 7,
-              names: ["tsc"],
-              args: ["--lsp", "--stdio"],
-            },
+            names: ["tsc"],
+            args: ["--lsp", "--stdio"],
+            ifFail: [tls, globalTls, npxTls],
           },
+          {
+            type: "global",
+            names: ["tsc"],
+            args: ["--lsp", "--stdio"],
+            ifFail: [tls, globalTls, npxTls],
+          },
+          tls,
+          globalTls,
+          npxTls,
         ],
         defaultArgs: ["--stdio"],
       };
       const projectRoot = "/test/project";
-      const bins = {
+      const local = {
         tsc: join(projectRoot, "node_modules", ".bin", "tsc"),
         tls: join(
           projectRoot,
@@ -94,76 +111,107 @@ describe("binFinder", () => {
           ".bin",
           "typescript-language-server",
         ),
-        parentTsc: "/test/node_modules/.bin/tsc",
-        parentTls: "/test/node_modules/.bin/typescript-language-server",
       };
-      const packageJsons: Record<string, "local" | "parent"> = {
-        [join(projectRoot, "node_modules", "typescript", "package.json")]:
-          "local",
-        "/test/node_modules/typescript/package.json": "parent",
+      const parentTsc = "/test/node_modules/.bin/tsc";
+      const globalBins: Record<string, string> = {
+        tsc: "/usr/local/bin/tsc",
+        "typescript-language-server":
+          "/usr/local/bin/typescript-language-server",
       };
 
+      /** files that exist, which global binaries `which` finds, which commands answer initialize */
       function layout(
         existing: string[],
-        versions: Partial<Record<"local" | "parent", string>>,
+        global: string[],
+        speaksLsp: string[],
       ) {
         vi.mocked(fs.existsSync).mockImplementation((path) =>
           existing.includes(String(path)),
         );
-        vi.mocked(fs.readFileSync).mockImplementation((path) => {
-          const level = packageJsons[String(path)];
-          const version = level && versions[level];
-          if (version) return JSON.stringify({ version });
-          throw new Error(`ENOENT: ${String(path)}`);
+        vi.mocked(child_process.execSync).mockImplementation((cmd) => {
+          const name = String(cmd).replace("which ", "");
+          if (global.includes(name)) return globalBins[name] + "\n";
+          throw new Error("not found");
         });
+        vi.mocked(child_process.spawnSync).mockImplementation(
+          (command) =>
+            ({
+              stdout: speaksLsp.includes(String(command))
+                ? "Content-Length: 2\r\n\r\n{}"
+                : "error TS5023: Unknown compiler option '--lsp'.",
+            }) as never,
+        );
       }
 
-      it("searches the override names with their args when the package is new enough", () => {
-        layout([bins.tsc, bins.tls], { local: "7.0.2" });
+      it("uses the local tsc when it answers initialize", () => {
+        layout([local.tsc, local.tls], [], [local.tsc]);
 
         expect(findBinary(strategy, projectRoot)).toEqual({
-          command: bins.tsc,
+          command: local.tsc,
           args: ["--lsp", "--stdio"],
         });
       });
 
-      it("searches the plain names when the package is too old", () => {
-        layout([bins.tsc, bins.tls], { local: "5.9.2" });
+      it("falls back to the local language server when the local tsc does not", () => {
+        layout([local.tsc, local.tls], [], []);
 
         expect(findBinary(strategy, projectRoot)).toEqual({
-          command: bins.tls,
+          command: local.tls,
           args: ["--stdio"],
         });
       });
 
-      it("searches the plain names when the package is not installed", () => {
-        layout([bins.tsc, bins.tls], {});
+      it("never tries an ancestor tsc once the nearest one failed", () => {
+        // local TypeScript 5, hoisted TypeScript 7, global language server
+        layout(
+          [local.tsc, parentTsc],
+          ["typescript-language-server"],
+          [parentTsc],
+        );
 
         expect(findBinary(strategy, projectRoot)).toEqual({
-          command: bins.tls,
+          command: globalBins["typescript-language-server"],
           args: ["--stdio"],
         });
+        expect(vi.mocked(child_process.spawnSync)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(child_process.spawnSync).mock.calls[0][0]).toBe(
+          local.tsc,
+        );
       });
 
-      it("lets the nearest install decide, then searches ancestors for that binary", () => {
-        // local TypeScript 5, language server hoisted next to a TypeScript 7
-        layout([bins.tsc, bins.parentTsc, bins.parentTls], {
-          local: "5.9.2",
-          parent: "7.1.0",
-        });
+      it("uses a global tsc when there is none in node_modules", () => {
+        layout([], ["tsc"], [globalBins.tsc]);
 
         expect(findBinary(strategy, projectRoot)).toEqual({
-          command: bins.parentTls,
-          args: ["--stdio"],
-        });
-      });
-
-      it("uses a hoisted install when there is none locally", () => {
-        layout([bins.parentTsc, bins.parentTls], { parent: "7.1.0" });
-
-        expect(findBinary(strategy, projectRoot)).toEqual({
-          command: bins.parentTsc,
+          command: globalBins.tsc,
           args: ["--lsp", "--stdio"],
+        });
+      });
+
+      it("falls back to the global language server when the global tsc does not answer", () => {
+        layout([], ["tsc", "typescript-language-server"], []);
+
+        expect(findBinary(strategy, projectRoot)).toEqual({
+          command: globalBins["typescript-language-server"],
+          args: ["--stdio"],
+        });
+      });
+
+      it("uses a local language server when only a global tsc exists and fails", () => {
+        layout([local.tls], ["tsc"], []);
+
+        expect(findBinary(strategy, projectRoot)).toEqual({
+          command: local.tls,
+          args: ["--stdio"],
+        });
+      });
+
+      it("ends at npx when nothing is installed", () => {
+        layout([], [], []);
+
+        expect(findBinary(strategy, projectRoot)).toEqual({
+          command: "npx",
+          args: ["-y", "typescript-language-server", "--stdio"],
         });
       });
     });

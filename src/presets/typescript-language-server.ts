@@ -1,4 +1,16 @@
-import type { Preset } from "../config/schema.ts";
+import type { BinFindStrategyItem, Preset } from "../config/schema.ts";
+
+const languageServer: BinFindStrategyItem[] = [
+  { type: "node_modules", names: ["typescript-language-server"] },
+  { type: "global", names: ["typescript-language-server"] },
+  { type: "npx", package: "typescript-language-server" },
+];
+
+const tscLsp = (type: "node_modules" | "global") => ({
+  type,
+  names: ["tsc"],
+  args: ["--lsp", "--stdio"],
+});
 
 /**
  * TypeScript adapter (default)
@@ -7,22 +19,11 @@ export const typescriptAdapter: Preset = {
   presetId: "typescript",
   binFindStrategy: {
     strategies: [
-      // 1. Check node_modules first
-      {
-        type: "node_modules",
-        names: ["typescript-language-server"],
-        // TypeScript 7+ serves LSP from tsc itself
-        override: {
-          package: "typescript",
-          minMajor: 7,
-          names: ["tsc"],
-          args: ["--lsp", "--stdio"],
-        },
-      },
-      // 2. Check global installation
-      { type: "global", names: ["typescript-language-server"] },
-      // 3. Fall back to npx
-      { type: "npx", package: "typescript-language-server" },
+      // The nearest tsc is the project's compiler: TypeScript 7+ serves LSP
+      // from it, older ones are driven through typescript-language-server
+      { ...tscLsp("node_modules"), ifFail: languageServer },
+      { ...tscLsp("global"), ifFail: languageServer },
+      ...languageServer,
     ],
     defaultArgs: ["--stdio"],
   },
