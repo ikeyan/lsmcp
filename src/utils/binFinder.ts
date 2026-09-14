@@ -7,6 +7,18 @@ import { join, dirname } from "path";
 import { execSync } from "child_process";
 import type { BinFindStrategy } from "../config/schema.ts";
 import { mcpDebugWithPrefix } from "./mcp-logger.ts";
+import { installedPackageMajor } from "./packageVersion.ts";
+
+/** `dir` followed by each of its ancestors up to the filesystem root. */
+function* selfAndAncestors(dir: string): Generator<string> {
+  let current = dir;
+  while (true) {
+    yield current;
+    const parent = dirname(current);
+    if (parent === current) return;
+    current = parent;
+  }
+}
 
 /**
  * Find a binary using the specified strategy
@@ -73,32 +85,38 @@ export function findBinary(
       }
 
       case "node_modules": {
-        // Search in node_modules/.bin
+        // Search in node_modules/.bin of the project and its ancestors
         for (const name of item.names) {
-          // Check current directory
-          const localBin = join(projectRoot, "node_modules", ".bin", name);
-          if (existsSync(localBin)) {
-            mcpDebugWithPrefix(
-              "BinFinder",
-              `Found in local node_modules: ${localBin}`,
-            );
-            return { command: localBin, args: defaultArgs };
-          }
+          for (const dir of selfAndAncestors(projectRoot)) {
+            const nodeModules = join(dir, "node_modules");
+            const bin = join(nodeModules, ".bin", name);
+            if (!existsSync(bin)) continue;
 
-          // Check parent directories
-          let currentDir = projectRoot;
-          let parentDir = dirname(currentDir);
-          while (parentDir !== currentDir) {
-            const parentBin = join(parentDir, "node_modules", ".bin", name);
-            if (existsSync(parentBin)) {
-              mcpDebugWithPrefix(
-                "BinFinder",
-                `Found in parent node_modules: ${parentBin}`,
+            if (item.requires) {
+              const major = installedPackageMajor(
+                nodeModules,
+                item.requires.package,
               );
-              return { command: parentBin, args: defaultArgs };
+              if (major === undefined) {
+                mcpDebugWithPrefix(
+                  "BinFinder",
+                  `Skipping ${bin}: ${item.requires.package} is not installed there`,
+                );
+                continue;
+              }
+              if (major < item.requires.minMajor) {
+                // The nearest install is the one the project builds with;
+                // do not swap it for an unrelated newer copy further up.
+                mcpDebugWithPrefix(
+                  "BinFinder",
+                  `Skipping ${bin}: requires ${item.requires.package} >= ${item.requires.minMajor}, found ${major}`,
+                );
+                break;
+              }
             }
-            currentDir = parentDir;
-            parentDir = dirname(currentDir);
+
+            mcpDebugWithPrefix("BinFinder", `Found in node_modules: ${bin}`);
+            return { command: bin, args: defaultArgs };
           }
         }
         break;
