@@ -95,6 +95,7 @@ describe("binFinder", () => {
           "typescript-language-server",
         ),
         parentTsc: "/test/node_modules/.bin/tsc",
+        parentTls: "/test/node_modules/.bin/typescript-language-server",
       };
       const packageJsons: Record<string, "local" | "parent"> = {
         [join(projectRoot, "node_modules", "typescript", "package.json")]:
@@ -144,8 +145,21 @@ describe("binFinder", () => {
         });
       });
 
-      it("decides per node_modules directory while walking up", () => {
-        layout([bins.tsc, bins.parentTsc], { local: "5.9.2", parent: "7.1.0" });
+      it("lets the nearest install decide, then searches ancestors for that binary", () => {
+        // local TypeScript 5, language server hoisted next to a TypeScript 7
+        layout([bins.tsc, bins.parentTsc, bins.parentTls], {
+          local: "5.9.2",
+          parent: "7.1.0",
+        });
+
+        expect(findBinary(strategy, projectRoot)).toEqual({
+          command: bins.parentTls,
+          args: ["--stdio"],
+        });
+      });
+
+      it("uses a hoisted install when there is none locally", () => {
+        layout([bins.parentTsc, bins.parentTls], { parent: "7.1.0" });
 
         expect(findBinary(strategy, projectRoot)).toEqual({
           command: bins.parentTsc,

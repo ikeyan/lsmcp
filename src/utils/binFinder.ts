@@ -9,24 +9,29 @@ import type { BinFindStrategy } from "../config/schema.ts";
 import { mcpDebugWithPrefix } from "./mcp-logger.ts";
 import { installedPackageMajor } from "./packageVersion.ts";
 
-/** Binary names and args to search in this node_modules, applying `override`. */
-function candidatesIn(
-  nodeModules: string,
+/**
+ * Binary names and args for a node_modules item. The nearest installed copy
+ * of `override.package` decides once whether the override applies.
+ */
+function candidatesFor(
+  nodeModulesDirs: string[],
   item: Extract<
     BinFindStrategy["strategies"][number],
     { type: "node_modules" }
   >,
   defaultArgs: string[],
 ): { names: string[]; args: string[] } {
+  const plain = { names: item.names, args: defaultArgs };
   const override = item.override;
-  if (
-    override &&
-    (installedPackageMajor(nodeModules, override.package) ?? -Infinity) >=
-      override.minMajor
-  ) {
-    return { names: override.names, args: override.args ?? defaultArgs };
+  if (!override) return plain;
+  for (const nodeModules of nodeModulesDirs) {
+    const major = installedPackageMajor(nodeModules, override.package);
+    if (major === undefined) continue;
+    return major >= override.minMajor
+      ? { names: override.names, args: override.args ?? defaultArgs }
+      : plain;
   }
-  return { names: item.names, args: defaultArgs };
+  return plain;
 }
 
 /** `dir` followed by each of its ancestors up to the filesystem root. */
@@ -106,9 +111,15 @@ export function findBinary(
 
       case "node_modules": {
         // Search in node_modules/.bin of the project and its ancestors
-        for (const dir of selfAndAncestors(projectRoot)) {
-          const nodeModules = join(dir, "node_modules");
-          const { names, args } = candidatesIn(nodeModules, item, defaultArgs);
+        const nodeModulesDirs = [...selfAndAncestors(projectRoot)].map((dir) =>
+          join(dir, "node_modules"),
+        );
+        const { names, args } = candidatesFor(
+          nodeModulesDirs,
+          item,
+          defaultArgs,
+        );
+        for (const nodeModules of nodeModulesDirs) {
           for (const name of names) {
             const bin = join(nodeModules, ".bin", name);
             if (existsSync(bin)) {
