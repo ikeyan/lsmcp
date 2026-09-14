@@ -73,37 +73,20 @@ export function findBinary(
 
     switch (item.type) {
       case "venv": {
-        // Search in Python virtual environments
+        // Search in Python virtual environments of the project and its ancestors
         const venvDirs = item.venvDirs || [".venv", "venv"];
         for (const name of item.names) {
-          // Check current directory
-          for (const venvDir of venvDirs) {
-            const venvBin = join(projectRoot, venvDir, "bin", name);
-            if (existsSync(venvBin)) {
-              mcpDebugWithPrefix(
-                "BinFinder",
-                `Found in Python ${venvDir}: ${venvBin}`,
-              );
-              return { command: venvBin, args: defaultArgs };
-            }
-          }
-
-          // Check parent directories
-          let currentDir = projectRoot;
-          let parentDir = dirname(currentDir);
-          while (parentDir !== currentDir) {
+          for (const dir of selfAndAncestors(projectRoot)) {
             for (const venvDir of venvDirs) {
-              const parentVenvBin = join(parentDir, venvDir, "bin", name);
-              if (existsSync(parentVenvBin)) {
+              const venvBin = join(dir, venvDir, "bin", name);
+              if (existsSync(venvBin)) {
                 mcpDebugWithPrefix(
                   "BinFinder",
-                  `Found in parent ${venvDir}: ${parentVenvBin}`,
+                  `Found in Python ${venvDir}: ${venvBin}`,
                 );
-                return { command: parentVenvBin, args: defaultArgs };
+                return { command: venvBin, args: defaultArgs };
               }
             }
-            currentDir = parentDir;
-            parentDir = dirname(currentDir);
           }
         }
         break;
