@@ -1,30 +1,24 @@
 import { describe, it, expect } from "vitest";
-import { EventEmitter } from "events";
+import type { ChildProcess } from "child_process";
 import { ConnectionHandler } from "./connection.ts";
-import type { LSPProcessState } from "./state.ts";
+import { createInitialState, type LSPProcessState } from "./state.ts";
 
-/** A state whose "process" records everything the client writes to stdin. */
+/** A state whose process records everything the client writes to stdin. */
 function createState() {
   const written: Array<Record<string, unknown>> = [];
-  const state = {
-    process: {
-      stdin: {
-        write(chunk: string) {
-          written.push(JSON.parse(chunk.slice(chunk.indexOf("\r\n\r\n") + 4)));
-          return true;
-        },
+  const process = {
+    stdin: {
+      write(chunk: string) {
+        written.push(JSON.parse(chunk.slice(chunk.indexOf("\r\n\r\n") + 4)));
+        return true;
       },
     },
-    messageId: 0,
-    responseHandlers: new Map(),
-    buffer: "",
-    contentLength: -1,
-    diagnostics: new Map(),
-    eventEmitter: new EventEmitter(),
+  } as unknown as ChildProcess;
+  const state = createInitialState({
+    process,
     rootPath: "/project",
     languageId: "typescript",
-    fileSystemApi: {} as never,
-  } as unknown as LSPProcessState;
+  });
   return { state, written };
 }
 
